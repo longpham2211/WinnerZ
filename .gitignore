@@ -1,0 +1,41 @@
+# Virtual env
+.venv*/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Build
+build/
+build_venv/
+build-*/
+dist/
+test_venv/
+# Temp
+temp_uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+app-winnerz.py
+app.py
+fix_wrapper.py
+patch_wrapper.py
+stext-device.c
+compare_fitz_cpp.md
+production.py
+diff.patch
+#ignore
+winnerz/*.so
+pymupdf/
+test_speed.py
+test_speed.prof
+profile_winnerz.py
+compare.py
+run_compare.py
+replace_maps.py
+prof.out
+dummy.pdf
+server_fitz.py
+

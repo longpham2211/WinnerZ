@@ -1,0 +1,68 @@
+[build-system]
+requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "winnerz"
+version = "1.2.1"
+description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
+readme = "readme.md"
+authors = [
+    { name = "WinnerZ Contributors", email = "longpham2211@example.com" },
+]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Text Processing :: General",
+]
+dependencies = [
+    "pypdfium2",
+    "Pillow"
+]
+
+[project.urls]
+Homepage = "https://github.com/longpham2211/WinnerZ"
+Repository = "https://github.com/longpham2211/WinnerZ"
+
+[tool.scikit-build]
+cmake.version = ">=3.10"
+ninja.version = ">=1.10"
+sdist.include = [
+    "winnerz/**/*",
+    "src/**/*",
+    "include/**/*",
+    "extract_text/**/*",
+    "third-party/**/*",
+    "CMakeLists.txt",
+    "readme.md",
+    "LICENSE"
+]
+sdist.exclude = [
+    "build/**/*",
+    "build-*/**/*",
+    "test_venv/**/*",
+    ".venv*/**/*",
+    "cmap-resources-master/**/*"
+]
+wheel.packages = ["winnerz"]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-*"
+skip = "pp* *-musllinux*"
+test-requires = "pytest"
+# test-command = "pytest {project}/tests"
+
+[tool.cibuildwheel.macos]
+environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+environment = { LD_LIBRARY_PATH = "/project/third-party/pdfium/lib:$LD_LIBRARY_PATH" }
+
+
+

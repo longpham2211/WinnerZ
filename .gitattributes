@@ -1,0 +1,18 @@
+# Ignore vendored third-party libraries from language statistics
+extract_text/free-type/** linguist-vendored
+third-party/** linguist-vendored
+extract_text/miniz.c linguist-vendored
+extract_text/miniz.h linguist-vendored
+extract_text/puff.c linguist-vendored
+extract_text/puff.h linguist-vendored
+extract_text/ucdn.cpp linguist-vendored
+extract_text/ucdn.hpp linguist-vendored
+extract_text/ucdn_db.hpp linguist-vendored
+extract_text/adobe_glyph_list.hpp linguist-vendored
+extract_text/encodings.h linguist-vendored
+stext-device.c linguist-vendored
+cmap-resources-master/** linguist-vendored
+
+# Ensure C++ headers are detected correctly instead of C headers 
+*.h linguist-language=C++
+*.hpp linguist-language=C++

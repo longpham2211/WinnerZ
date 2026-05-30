@@ -1,0 +1,22 @@
+include CMakeLists.txt
+include readme.md
+include LICENSE
+recursive-include src *
+recursive-include include *
+recursive-include extract_text *
+recursive-include third-party *
+recursive-include winnerz *
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude *.so
+global-exclude *.pyd
+global-exclude *.dylib
+global-exclude *.o
+global-exclude *.obj
+global-exclude *.a
+global-exclude *.lib
+global-exclude .git*
+global-exclude build*
+global-exclude .venv*
+global-exclude test_venv*
+global-exclude cmap-resources-master*
