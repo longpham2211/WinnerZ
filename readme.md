@@ -104,4 +104,3 @@ Thanks to the native C++ multi-threading pipeline and persistent object caching,
 ## Dependencies
 
 *   `pypdfium2`: Optional but highly recommended. Used for decryption, primary preview rendering, and all In-Memory editing/redaction operations (including high-speed C-level XObject merging).
-*   `Pillow` (`PIL`): Optional. Required for encoding `Pixmap` instances to PNG/JPEG and manipulating preview images.
