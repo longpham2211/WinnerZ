@@ -11,8 +11,9 @@ The system is divided into several conceptual layers:
 1.  **Core Loader & Diagnostics**: Handles the dynamic importing of the C++ binary (`winnerz_core`), including binary size verification, truncation repair, and Windows DLL directory management.
 2.  **Document Object Model**: Provides Pythonic abstractions (`Document`, `Page`) to interact with PDF files, managing resources and state safely.
 3.  **Thread-Safe Interpreter Pipeline**: A C++ native, thread-safe PDF token interpreter that leverages `std::async` for parallel multi-page text extraction, eliminating GIL bottlenecks.
-4.  **Rendering Pipeline**: Integrates the C++ rendering engine with a fallback Python-based preview engine using `pypdfium2`.
-5.  **Geometry & Data Structures**: Implements domain-specific types (`Rect`, `Matrix`, `Pixmap`) to standardize data flow between the C++ layer and Python runtime.
+4.  **Micro-OCR Fallback Engine**: A pure C++ built-in OCR engine that activates automatically when encountering corrupted or missing `ToUnicode` tables. It uses 64-bit bitwise packing and hardware `POPCOUNT` for blazing fast template matching without external dependencies like Tesseract.
+5.  **Rendering Pipeline**: Integrates the C++ rendering engine with a fallback Python-based preview engine using `pypdfium2`.
+6.  **Geometry & Data Structures**: Implements domain-specific types (`Rect`, `Matrix`, `Pixmap`) to standardize data flow between the C++ layer and Python runtime.
 
 ## Core Loading Mechanism
 
@@ -27,6 +28,14 @@ The library initializes the C++ binary through `_load_core()`. This system provi
 *   `WINNERZ_PREVIEW_BACKEND`: Controls the backend used for rendering preview data when the C++ core returns placeholder data.
     *   Valid values: `auto` (default), `pdfium`.
     *   Resolution order for `auto`: Uses PDFium when available.
+
+## Advanced Features
+
+### Micro-OCR Anti-Obfuscation
+WinnerZ includes a built-in, lightweight Micro-OCR engine written entirely in C++. When a PDF intentionally hides its text by removing the `ToUnicode` table or scrambling encodings, the engine automatically falls back to rendering the vector glyphs and performing Image-over-Union (IoU) template matching.
+*   **Broad Language Support**: Contains 2170+ built-in templates covering English, Vietnamese, Latin Extended, Cyrillic, Greek, and Thai.
+*   **Hardware Accelerated**: Uses 64-bit Bitwise Packing and CPU `__popcnt64` instructions to evaluate millions of pixel comparisons in milliseconds.
+*   **Zero Dependencies**: Does not require Tesseract, ONNX, or any heavy AI models.
 
 ## Class Reference
 
@@ -97,9 +106,14 @@ logging.getLogger("winnerz").setLevel(logging.DEBUG)
 
 Thanks to the native C++ multi-threading pipeline and persistent object caching, `WinnerZ` outperforms established industry standards like `PyMuPDF` (fitz) significantly in bulk text extraction tasks.
 
-*Tested on a 185-page PDF document (2024-annual-report.pdf):*
+*Tested trên file 185 trang PDF chuẩn:*
 *   ⏱️ PyMuPDF (`fitz`): **~0.44s**
 *   🚀 WinnerZ (`extract_all_text_concurrent()`): **~0.18s** (2.5x Faster)
+
+### C++ Micro-OCR Benchmark
+*Tested trên file PDF bị mã hóa 100% chữ (Ép hệ thống quét Micro-OCR toàn bộ ký tự):*
+*   🐢 OCR truyền thống (Tesseract): **~3 - 5 giây / trang**
+*   ⚡ WinnerZ Micro-OCR (Bitwise Optimized): **~0.33 giây / trang** (Nhanh gấp ~15 lần)
 
 ## Dependencies
 

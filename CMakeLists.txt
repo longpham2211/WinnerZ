@@ -38,6 +38,7 @@ add_library(WinnerZ STATIC
     extract_text/bidi_std.cpp
     extract_text/ucdn.cpp
     extract_text/puff.c
+    extract_text/micro_ocr.cpp
 )
 set_target_properties(WinnerZ PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(WinnerZ PUBLIC cxx_std_17)

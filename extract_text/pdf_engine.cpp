@@ -1,5 +1,7 @@
 #include <unordered_set>
+#include <iostream>
 #include "pdf_engine.hpp"
+#include "micro_ocr.hpp"
 #include "parse.hpp"
 #include "xref.hpp"
 #include "cmap_parse.hpp"
@@ -3867,7 +3869,7 @@ static int glyph_name_to_unicode(std::string name) {
     return 0;
 }
 
-static void apply_differences_to_map(const std::string& dict, std::map<int, int>& map_out) {
+static void apply_differences_to_map(const std::string& dict, std::map<int, int>& map_out, std::map<int, std::string>* names_out = nullptr) {
     size_t diff_pos = dict.find("/Differences");
     if (diff_pos == std::string::npos) {
         return;
@@ -3897,6 +3899,9 @@ static void apply_differences_to_map(const std::string& dict, std::map<int, int>
             }
             std::string gname = dict.substr(start, pos - start);
             if (code >= 0 && code <= 255) {
+                if (names_out) {
+                    (*names_out)[code] = gname;
+                }
                 int cp = glyph_name_to_unicode_fitz(gname);
                 if (cp > 0) {
                     map_out[code] = cp;
@@ -6476,7 +6481,8 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
     };
 
     auto fill_missing_unicode_from_freetype = [&](const WinPdfObject& font_obj,
-                                                  std::unordered_map<int, std::vector<int>>& unicode_map) {
+                                                  std::unordered_map<int, std::vector<int>>& unicode_map,
+                                                  const std::map<int, std::string>& diff_names) {
         FT_Library library = get_freetype_library();
         if (!library) {
             return;
@@ -6612,7 +6618,15 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                 return 0;
             }
 
-            FT_UInt gid = FT_Get_Char_Index(face, static_cast<FT_ULong>(code));
+            FT_UInt gid = 0;
+            auto diff_it = diff_names.find(code);
+            if (diff_it != diff_names.end() && FT_HAS_GLYPH_NAMES(face)) {
+                gid = FT_Get_Name_Index(face, const_cast<FT_String*>(diff_it->second.c_str()));
+            }
+
+            if (gid == 0) {
+                gid = FT_Get_Char_Index(face, static_cast<FT_ULong>(code));
+            }
             if (gid != 0) {
                 return gid;
             }
@@ -6627,7 +6641,13 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                     if (FT_Set_Charmap(face, cmap) != 0) {
                         continue;
                     }
-                    gid = FT_Get_Char_Index(face, static_cast<FT_ULong>(code));
+                    gid = 0;
+                    if (diff_it != diff_names.end() && FT_HAS_GLYPH_NAMES(face)) {
+                        gid = FT_Get_Name_Index(face, const_cast<FT_String*>(diff_it->second.c_str()));
+                    }
+                    if (gid == 0) {
+                        gid = FT_Get_Char_Index(face, static_cast<FT_ULong>(code));
+                    }
                     if (gid != 0) {
                         break;
                     }
@@ -6652,27 +6672,20 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
-        // OPTIMIZATION: For identity CID-to-GID, code == gid directly.
-        // Instead of looping 65536 times calling FT_Get_Char_Index, just invert gid_to_unicode.
-        if (is_type0_subtype && cid_to_gid.has_map && cid_to_gid.identity) {
-            for (const auto& gid_pair : gid_to_unicode) {
-                int code = static_cast<int>(gid_pair.first); // gid == cid == code
-                if (code < 0 || code > max_code) continue;
-                int cp = gid_pair.second;
-                if (cp > 0 && cp <= 0x10FFFF) {
-                    auto it = unicode_map.find(code);
-                    if (it == unicode_map.end() || it->second.empty()) {
-                        unicode_map[code] = {cp};
-                    }
-                }
-            }
-            FT_Done_Face(face);
-            return;
-        }
+        // [Micro-OCR]: Xóa tối ưu hóa thoát sớm ở đây để đảm bảo các font Identity-H bị thiếu ToUnicode
+        // vẫn chạy xuống vòng lặp bên dưới để được quét OCR.
 
         for (int code = 0; code <= max_code; ++code) {
             FT_UInt gid = lookup_gid_for_code(code);
             if (gid == 0) {
+                continue;
+            }
+
+            auto it_check = unicode_map.find(code);
+            bool is_missing_in_pdf_cmap = (it_check == unicode_map.end() || it_check->second.empty() || 
+                                          (it_check->second.size() == 1 && (it_check->second[0] == 0xFFFD || it_check->second[0] == 0)));
+            if (!is_missing_in_pdf_cmap) {
+                // PDF's ToUnicode table already provides a valid mapping. Do nothing.
                 continue;
             }
 
@@ -6682,16 +6695,38 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                 cp = unicode_it->second;
             }
 
-            if ((cp <= 0 || cp > 0x10FFFF) && FT_HAS_GLYPH_NAMES(face)) {
+            auto is_invalid_cp = [](int c) {
+                return c <= 0 || c > 0x10FFFF || c == 0xFFFD || (c < 32 && c != 9 && c != 10 && c != 13);
+            };
+
+            if (is_invalid_cp(cp) && FT_HAS_GLYPH_NAMES(face)) {
                 char glyph_name[256] = {0};
                 if (FT_Get_Glyph_Name(face, gid, glyph_name, static_cast<FT_UInt>(sizeof(glyph_name))) == 0 && glyph_name[0] != '\0') {
                     cp = glyph_name_to_unicode_fitz(std::string(glyph_name));
                 }
             }
 
+            if (is_invalid_cp(cp)) {
+                if (apply_heuristic_vni_tcvn3(base_font_name, code, cp)) {
+                    // handled
+                } else {
+                    std::vector<int> ocr_cps = run_micro_ocr_on_glyph(face, gid);
+                    if (!ocr_cps.empty()) {
+                        unicode_map[code] = ocr_cps;
+                        cp = ocr_cps.front(); // just for flow below, though map is already updated
+                    }
+                }
+            }
+
             if (cp > 0 && cp <= 0x10FFFF) {
                 auto it = unicode_map.find(code);
+                bool should_update = false;
                 if (it == unicode_map.end() || it->second.empty()) {
+                    should_update = true;
+                } else if (it->second.size() == 1 && (it->second[0] == 0xFFFD || it->second[0] == 0)) {
+                    should_update = true;
+                }
+                if (should_update) {
                     unicode_map[code] = {cp};
                 }
             }
@@ -6834,15 +6869,6 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
-#ifdef WINEXTRACT_USE_FREETYPE
-        // Only run FreeType fallback if we're missing unicode coverage.
-        // Skip for ANY font that already has a ToUnicode or CID-collection cmap.
-        const bool skip_freetype_fallback = !cmap.empty();
-        if (!skip_freetype_fallback) {
-            fill_missing_unicode_from_freetype(font_obj, cmap);
-        }
-#endif
-
         std::string encoding_dict;
         std::string encoding_name = parse_name_value_after_key(font_obj.dict, "/Encoding");
         if (encoding_name.empty()) {
@@ -6862,6 +6888,18 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                 encoding_name = parse_name_value_after_key(encoding_dict, "/BaseEncoding");
             }
         }
+
+        std::map<int, std::string> diff_names;
+        if (!encoding_dict.empty()) {
+            std::map<int, int> dummy;
+            apply_differences_to_map(encoding_dict, dummy, &diff_names);
+        }
+
+#ifdef WINEXTRACT_USE_FREETYPE
+        // Run FreeType fallback to fill any gaps, even if the font has a partial ToUnicode cmap
+        // or a maliciously broken one.
+        fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+#endif
 
         if (!is_type0_subtype) {
             std::map<int, int> fallback = build_encoding_map(encoding_name);
