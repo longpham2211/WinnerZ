@@ -48,7 +48,7 @@ Represents a PDF document instance. It manages the lifecycle of the underlying f
 **Methods:**
 *   `__getitem__(index)`: Retrieves a `Page` object at the specified 0-based index. Supports negative indexing.
 *   `__len__()`: Returns the total number of pages in the document.
-*   `extract_all_text_concurrent()`: A highly optimized utility that utilizes C++ multi-threading to extract text from all pages. It uses a **dynamic hardware-concurrency batching** mechanism to process pages in chunks (scaling automatically with the number of CPU cores). This entirely bypasses the Python GIL and prevents thread-exhaustion (`EAGAIN`) on massive 5000+ page PDFs.
+*   `get_all_text()`: A highly optimized utility that utilizes C++ multi-threading to extract text from all pages. It uses a **dynamic hardware-concurrency batching** mechanism to process pages in chunks (scaling automatically with the number of CPU cores). This entirely bypasses the Python GIL and prevents thread-exhaustion (`EAGAIN`) on massive 5000+ page PDFs.
 *   `tobytes()`: (Zero-Disk) Returns the finalized PDF as a raw byte array directly from RAM, avoiding any disk I/O.
 *   `redact_text_multiple_pages_to_bytes(page_rects_map)`: (Native C++) Performs parallel Block Redaction across multiple pages and returns the cleaned PDF as `bytes` directly in RAM. Use with caution on very large files to avoid memory pressure.
 *   `close()`: Cleans up temporary resources, such as decrypted temporary files and in-memory editing buffers.
@@ -108,7 +108,7 @@ Thanks to the native C++ multi-threading pipeline and persistent object caching,
 
 *Tested trên file 185 trang PDF chuẩn:*
 *   ⏱️ PyMuPDF (`fitz`): **~0.44s**
-*   🚀 WinnerZ (`extract_all_text_concurrent()`): **~0.18s** (2.5x Faster)
+*   🚀 WinnerZ (`get_all_text()`): **~0.18s** (2.5x Faster)
 
 ### C++ Micro-OCR Benchmark
 *Tested trên file PDF bị mã hóa 100% chữ (Ép hệ thống quét Micro-OCR toàn bộ ký tự):*

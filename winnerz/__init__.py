@@ -849,6 +849,18 @@ class Document:
     def redact_text_multiple_pages_to_bytes(self, page_rects_map):
         return self._core_doc.redact_multiple_pages_to_bytes(page_rects_map, 0.0)
 
+    def redact_text_multiple_pages(self, output_path, page_rects_map):
+        return self._core_doc.redact_multiple_pages(output_path, page_rects_map, 0.0)
+
+    def clear_page_cache(self):
+        return self._core_doc.clear_page_cache()
+
+    def get_all_text(self):
+        """
+        Extract text from all pages concurrently using C++ threads.
+        This bypasses the Python GIL and scales with the number of CPU cores.
+        """
+        return self._core_doc.extract_all_text_concurrent()
 
     def save(self, path):
         with _silence_c_stderr():
