@@ -21,6 +21,32 @@
 #include <string>
 #include <vector>
 #include <cctype>
+#include <mutex>
+#include <memory>
+
+// Global RAM Cache for OCR results to avoid re-OCRing across pages/documents
+using GlobalFontUnicodeMap = std::unordered_map<int, std::vector<int>>;
+static std::mutex g_global_font_cache_mutex;
+static std::unordered_map<uint64_t, std::shared_ptr<GlobalFontUnicodeMap>> g_global_font_cache;
+
+// FNV-1a 64-bit hash
+inline uint64_t fnv1a_hash_bytes(const std::vector<uint8_t>& data) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (uint8_t byte : data) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+inline uint64_t fnv1a_hash_string(const std::string& str) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (char c : str) {
+        hash ^= static_cast<uint8_t>(c);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
 
 #include <string>
 #include <vector>
@@ -6540,6 +6566,29 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
+        uint64_t global_font_hash = 0;
+        if (!font_bytes.empty()) {
+            global_font_hash = fnv1a_hash_bytes(font_bytes);
+        } else {
+            global_font_hash = fnv1a_hash_string(base_font_name);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_global_font_cache_mutex);
+            auto global_it = g_global_font_cache.find(global_font_hash);
+            if (global_it != g_global_font_cache.end()) {
+                // Cache hit! Update unicode_map and return early!
+                for (const auto& pair : *(global_it->second)) {
+                    unicode_map[pair.first] = pair.second;
+                }
+                
+                if (face) {
+                    FT_Done_Face(face);
+                }
+                return; // 0.00s OCR bypass!
+            }
+        }
+
         if (!face) {
             return;
         }
@@ -6675,6 +6724,8 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
         // [Micro-OCR]: Xóa tối ưu hóa thoát sớm ở đây để đảm bảo các font Identity-H bị thiếu ToUnicode
         // vẫn chạy xuống vòng lặp bên dưới để được quét OCR.
 
+        int consecutive_ocr_failures = 0;
+
         for (int code = 0; code <= max_code; ++code) {
             FT_UInt gid = lookup_gid_for_code(code);
             if (gid == 0) {
@@ -6709,11 +6760,14 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             if (is_invalid_cp(cp)) {
                 if (apply_heuristic_vni_tcvn3(base_font_name, code, cp)) {
                     // handled
-                } else {
+                } else if (consecutive_ocr_failures < 20) {
                     std::vector<int> ocr_cps = run_micro_ocr_on_glyph(face, gid);
                     if (!ocr_cps.empty()) {
                         unicode_map[code] = ocr_cps;
                         cp = ocr_cps.front(); // just for flow below, though map is already updated
+                        consecutive_ocr_failures = 0; // Reset counter on success!
+                    } else {
+                        consecutive_ocr_failures++; // Increment on failure
                     }
                 }
             }
@@ -6733,6 +6787,16 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
         }
 
         FT_Done_Face(face);
+        
+        // Save the learned OCR results into the Global RAM Cache!
+        {
+            std::shared_ptr<GlobalFontUnicodeMap> global_ptr = std::make_shared<GlobalFontUnicodeMap>();
+            for (const auto& pair : unicode_map) {
+                (*global_ptr)[pair.first] = pair.second;
+            }
+            std::lock_guard<std::mutex> lock(g_global_font_cache_mutex);
+            g_global_font_cache[global_font_hash] = global_ptr;
+        }
     };
 #endif
 

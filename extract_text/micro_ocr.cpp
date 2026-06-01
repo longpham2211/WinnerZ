@@ -67,8 +67,34 @@ static std::vector<int> utf8_to_codepoints(const char* str) {
     return result;
 }
 
+// LSH by Pixel Density
+struct SortedTemplate {
+    int index;
+    int pixel_count;
+};
+static std::vector<SortedTemplate> g_sorted_templates;
+static bool g_templates_initialized = false;
+
+static void init_sorted_templates() {
+    if (g_templates_initialized) return;
+    g_sorted_templates.reserve(NUM_MICRO_OCR_TEMPLATES);
+    for (int i = 0; i < NUM_MICRO_OCR_TEMPLATES; ++i) {
+        int count = POPCOUNT64(MICRO_OCR_TEMPLATES[i].pixels[0]) + 
+                    POPCOUNT64(MICRO_OCR_TEMPLATES[i].pixels[1]) + 
+                    POPCOUNT64(MICRO_OCR_TEMPLATES[i].pixels[2]) + 
+                    POPCOUNT64(MICRO_OCR_TEMPLATES[i].pixels[3]);
+        g_sorted_templates.push_back({i, count});
+    }
+    std::sort(g_sorted_templates.begin(), g_sorted_templates.end(), [](const SortedTemplate& a, const SortedTemplate& b) {
+        return a.pixel_count < b.pixel_count;
+    });
+    g_templates_initialized = true;
+}
+
 std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     if (!face) return {};
+    
+    init_sorted_templates();
     
     // Set a fixed pixel size so the rendered bitmap is comparable to our 16x16 templates
     FT_Set_Pixel_Sizes(face, 0, 16);
@@ -85,6 +111,7 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     
     // Downsample/upsample the bitmap into a 16x16 buffer packed as 4 uint64_t
     uint64_t rendered_blocks[4] = {0, 0, 0, 0};
+    int glyph_pixels = 0;
     for (int y = 0; y < 16; ++y) {
         for (int x = 0; x < 16; ++x) {
             float u = (x + 0.5f) / 16.0f;
@@ -95,6 +122,7 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
                 int block_idx = pixel_idx / 64;
                 int bit_idx = pixel_idx % 64;
                 rendered_blocks[block_idx] |= (1ULL << bit_idx);
+                glyph_pixels++;
             }
         }
     }
@@ -103,8 +131,15 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     std::string best_char_utf8 = "";
     float best_score = 0.0f;
     
-    for (int i = 0; i < NUM_MICRO_OCR_TEMPLATES; ++i) {
-        const MicroOcrTemplate& tpl = MICRO_OCR_TEMPLATES[i];
+    // Filter templates that have a similar number of black pixels (+/- 30 pixels margin)
+    auto it_start = std::lower_bound(g_sorted_templates.begin(), g_sorted_templates.end(), glyph_pixels - 30, 
+        [](const SortedTemplate& t, int val) { return t.pixel_count < val; });
+        
+    auto it_end = std::upper_bound(g_sorted_templates.begin(), g_sorted_templates.end(), glyph_pixels + 30, 
+        [](int val, const SortedTemplate& t) { return val < t.pixel_count; });
+
+    for (auto it = it_start; it != it_end; ++it) {
+        const MicroOcrTemplate& tpl = MICRO_OCR_TEMPLATES[it->index];
         
         long sum_intersection = 0;
         long sum_union = 0;
@@ -121,6 +156,9 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
             if (score > best_score) {
                 best_score = score;
                 best_char_utf8 = tpl.utf8_char;
+                if (best_score > 0.95f) {
+                    break; // PERF: Early exit for perfect match
+                }
             }
         } else if (sum_intersection == 0 && sum_union == 0) {
             // both empty
@@ -128,6 +166,7 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
             if (score > best_score) {
                 best_score = score;
                 best_char_utf8 = tpl.utf8_char;
+                break; // PERF: Early exit for perfect match (empty)
             }
         }
     }
@@ -147,8 +186,11 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
 bool apply_heuristic_vni_tcvn3(const std::string& font_name, int code, int& out_unicode) {
     if (font_name.empty()) return false;
     
+    // Fast path: Only run heuristics if it's a single byte code (VNI/TCVN3 are 8-bit encodings)
+    if (code > 255) return false;
+    
     // Check if font name hints at VNI
-    bool is_vni = (font_name.find("VNI-") != std::string::npos || font_name.find("VNI") != std::string::npos);
+    bool is_vni = (font_name.find("VNI") != std::string::npos); // "VNI" covers "VNI-"
     bool is_tcvn3 = (font_name.find(".Vn") != std::string::npos || font_name.find("VN") != std::string::npos);
     
     if (!is_vni && !is_tcvn3) return false;
