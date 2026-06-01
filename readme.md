@@ -106,14 +106,14 @@ logging.getLogger("winnerz").setLevel(logging.DEBUG)
 
 Thanks to the native C++ multi-threading pipeline and persistent object caching, `WinnerZ` outperforms established industry standards like `PyMuPDF` (fitz) significantly in bulk text extraction tasks.
 
-*Tested trên file 185 trang PDF chuẩn:*
+*Tested on a standard 185-page PDF file:*
 *   ⏱️ PyMuPDF (`fitz`): **~0.44s**
 *   🚀 WinnerZ (`get_all_text()`): **~0.18s** (2.5x Faster)
 
 ### C++ Micro-OCR Benchmark
-*Tested trên file PDF bị mã hóa 100% chữ (Ép hệ thống quét Micro-OCR toàn bộ ký tự):*
-*   🐢 OCR truyền thống (Tesseract): **~3 - 5 giây / trang**
-*   ⚡ WinnerZ Micro-OCR (Bitwise Optimized): **~0.33 giây / trang** (Nhanh gấp ~15 lần)
+*Tested on a 100% text-obfuscated PDF file (Forcing the system to Micro-OCR all characters):*
+*   🐢 Traditional OCR (Tesseract): **~3 - 5 seconds / page**
+*   ⚡ WinnerZ Micro-OCR (Bitwise Optimized): **~0.33 seconds / page** (~15x Faster)
 
 ## Dependencies
 
