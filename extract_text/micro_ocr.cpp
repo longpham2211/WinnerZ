@@ -99,8 +99,15 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     // Set a fixed pixel size so the rendered bitmap is comparable to our 16x16 templates
     FT_Set_Pixel_Sizes(face, 0, 16);
     
-    // Load and render the glyph as a monochrome bitmap (1-bit) to match templates
-    if (FT_Load_Glyph(face, glyph_id, FT_LOAD_RENDER | FT_LOAD_TARGET_MONO) != 0) {
+    // Load the glyph first to get the structural contours BEFORE rendering turns it into a bitmap
+    if (FT_Load_Glyph(face, glyph_id, FT_LOAD_DEFAULT) != 0) {
+        return {};
+    }
+    
+    int target_contours = face->glyph->outline.n_contours;
+    
+    // Now render it as a mono bitmap for the pixel fallback
+    if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_MONO) != 0) {
         return {};
     }
     
@@ -109,16 +116,16 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
         return {' '}; // Empty glyph is usually a space
     }
     
-    // Downsample/upsample the bitmap into a 16x16 buffer packed as 4 uint64_t
-    uint64_t rendered_blocks[4] = {0, 0, 0, 0};
+    // Downsample/upsample the bitmap into a 32x32 buffer packed as 16 uint64_t
+    uint64_t rendered_blocks[16] = {0};
     int glyph_pixels = 0;
-    for (int y = 0; y < 16; ++y) {
-        for (int x = 0; x < 16; ++x) {
-            float u = (x + 0.5f) / 16.0f;
-            float v = (y + 0.5f) / 16.0f;
+    for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 32; ++x) {
+            float u = (x + 0.5f) / 32.0f;
+            float v = (y + 0.5f) / 32.0f;
             uint8_t pixel = sample_bitmap(bitmap, u, v);
             if (pixel > 127) {
-                int pixel_idx = y * 16 + x;
+                int pixel_idx = y * 32 + x;
                 int block_idx = pixel_idx / 64;
                 int bit_idx = pixel_idx % 64;
                 rendered_blocks[block_idx] |= (1ULL << bit_idx);
@@ -131,24 +138,23 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     std::string best_char_utf8 = "";
     float best_score = 0.0f;
     
-    // Filter templates that have a similar number of black pixels (+/- 30 pixels margin)
-    auto it_start = std::lower_bound(g_sorted_templates.begin(), g_sorted_templates.end(), glyph_pixels - 30, 
-        [](const SortedTemplate& t, int val) { return t.pixel_count < val; });
+    for (int i = 0; i < NUM_MICRO_OCR_TEMPLATES; ++i) {
+        const MicroOcrTemplate& tpl = MICRO_OCR_TEMPLATES[i];
         
-    auto it_end = std::upper_bound(g_sorted_templates.begin(), g_sorted_templates.end(), glyph_pixels + 30, 
-        [](int val, const SortedTemplate& t) { return val < t.pixel_count; });
-
-    for (auto it = it_start; it != it_end; ++it) {
-        const MicroOcrTemplate& tpl = MICRO_OCR_TEMPLATES[it->index];
+        // Structural Topology Filter: MUST BE EXACT MATCH
+        // 5 has 1 contour, 6 has 2 contours, B has 3 contours. 
+        if (tpl.contours != target_contours) {
+            continue;
+        }
         
         long sum_intersection = 0;
         long sum_union = 0;
         
-        for (int p = 0; p < 4; ++p) {
-            uint64_t r = rendered_blocks[p];
-            uint64_t t = tpl.pixels[p];
-            sum_intersection += POPCOUNT64(r & t);
-            sum_union += POPCOUNT64(r | t);
+        for (int p = 0; p < 16; ++p) {
+            uint64_t a = tpl.pixels[p];
+            uint64_t b = rendered_blocks[p];
+            sum_intersection += POPCOUNT64(a & b);
+            sum_union += POPCOUNT64(a | b);
         }
         
         if (sum_union > 0) {
@@ -156,9 +162,6 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
             if (score > best_score) {
                 best_score = score;
                 best_char_utf8 = tpl.utf8_char;
-                if (best_score > 0.95f) {
-                    break; // PERF: Early exit for perfect match
-                }
             }
         } else if (sum_intersection == 0 && sum_union == 0) {
             // both empty
@@ -173,7 +176,7 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     
     // Threshold for IoU is generally lower than pixel similarity
     // A good match is usually > 0.4 or 0.5 IoU
-    if (best_score >= 0.40f && !best_char_utf8.empty()) {
+    if (best_score > 0.30f && !best_char_utf8.empty()) {
         return utf8_to_codepoints(best_char_utf8.c_str());
     }
     
