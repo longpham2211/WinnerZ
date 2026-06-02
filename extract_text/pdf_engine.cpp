@@ -6566,29 +6566,6 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
-        uint64_t global_font_hash = 0;
-        if (!font_bytes.empty()) {
-            global_font_hash = fnv1a_hash_bytes(font_bytes);
-        } else {
-            global_font_hash = fnv1a_hash_string(base_font_name);
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(g_global_font_cache_mutex);
-            auto global_it = g_global_font_cache.find(global_font_hash);
-            if (global_it != g_global_font_cache.end()) {
-                // Cache hit! Update unicode_map and return early!
-                for (const auto& pair : *(global_it->second)) {
-                    unicode_map[pair.first] = pair.second;
-                }
-                
-                if (face) {
-                    FT_Done_Face(face);
-                }
-                return; // 0.00s OCR bypass!
-            }
-        }
-
         if (!face) {
             return;
         }
@@ -6786,16 +6763,8 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
-        FT_Done_Face(face);
-        
-        // Save the learned OCR results into the Global RAM Cache!
-        {
-            std::shared_ptr<GlobalFontUnicodeMap> global_ptr = std::make_shared<GlobalFontUnicodeMap>();
-            for (const auto& pair : unicode_map) {
-                (*global_ptr)[pair.first] = pair.second;
-            }
-            std::lock_guard<std::mutex> lock(g_global_font_cache_mutex);
-            g_global_font_cache[global_font_hash] = global_ptr;
+        if (face) {
+            FT_Done_Face(face);
         }
     };
 #endif
@@ -6959,12 +6928,6 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             apply_differences_to_map(encoding_dict, dummy, &diff_names);
         }
 
-#ifdef WINEXTRACT_USE_FREETYPE
-        // Run FreeType fallback to fill any gaps, even if the font has a partial ToUnicode cmap
-        // or a maliciously broken one.
-        fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
-#endif
-
         if (!is_type0_subtype) {
             std::map<int, int> fallback = build_encoding_map(encoding_name);
             if (fallback.empty()) {
@@ -6983,6 +6946,12 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                 }
             }
         }
+
+#ifdef WINEXTRACT_USE_FREETYPE
+        // Run FreeType fallback to fill any gaps, even if the font has a partial ToUnicode cmap
+        // or a maliciously broken one.
+        fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+#endif
 
         if (is_type3_subtype) {
             apply_type3_ascii_fallback_fitz(cmap);
