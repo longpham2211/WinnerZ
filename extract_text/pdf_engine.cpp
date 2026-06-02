@@ -145,6 +145,10 @@ static bool wz_parse_xref_line_3(const char* p, int& id, int& gen, char& r, int&
 
 namespace WinExtract {
 
+static std::shared_mutex g_global_freetype_cache_mutex;
+static std::unordered_map<uint64_t, std::shared_ptr<std::unordered_map<unsigned int, int>>> g_global_freetype_cache;
+
+
 static uint8_t hex_to_byte(char h1, char h2) {
     auto to_nibble = [](char c) -> uint8_t {
         if (c >= '0' && c <= '9') return c - '0';
@@ -159,8 +163,8 @@ namespace {
 
 #ifdef WINEXTRACT_USE_FREETYPE
 static FT_Library get_freetype_library() {
-    static FT_Library library = nullptr;
-    static bool initialized = false;
+    thread_local FT_Library library = nullptr;
+    thread_local bool initialized = false;
     if (!initialized) {
         initialized = true;
         if (FT_Init_FreeType(&library) != 0) {
@@ -10226,6 +10230,331 @@ bool WinPdfDocument::has_flate_filter(const std::string& dict) {
         return true;
     }
     return false;
+}
+
+
+bool WinPdfDocument::resolve_type0_descendant_font(const WinPdfObject& font_obj, WinPdfObject& descendant_font_obj) {
+    descendant_font_obj = {};
+    if (parse_name_value_after_key(font_obj.dict, "/Subtype") != "Type0") return false;
+
+    std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
+    if (descendant_ids.empty()) {
+        int single_descendant = parse_ref_id_after_key(font_obj.dict, "/DescendantFonts");
+        if (single_descendant > 0) descendant_ids.push_back(single_descendant);
+    }
+    if (descendant_ids.empty() || descendant_ids.front() <= 0) return false;
+
+    descendant_font_obj = read_obj(descendant_ids.front());
+    return descendant_font_obj.id > 0 || !descendant_font_obj.dict.empty() || !descendant_font_obj.body.empty();
+}
+
+bool WinPdfDocument::resolve_font_descriptor_dict(const WinPdfObject& font_obj, std::string& descriptor_dict) {
+    descriptor_dict.clear();
+
+    auto read_descriptor_from_dict = [&](const std::string& dict) -> bool {
+        int descriptor_ref = parse_ref_id_after_key(dict, "/FontDescriptor");
+        if (descriptor_ref > 0) {
+            WinPdfObject descriptor_obj = read_obj(descriptor_ref);
+            descriptor_dict = descriptor_obj.dict;
+        }
+        if (descriptor_dict.empty()) extract_inline_dict_after_key(dict, "/FontDescriptor", descriptor_dict);
+        return !descriptor_dict.empty();
+    };
+
+    if (read_descriptor_from_dict(font_obj.dict)) return true;
+
+    WinPdfObject descendant_font_obj;
+    if (resolve_type0_descendant_font(font_obj, descendant_font_obj)) {
+        return read_descriptor_from_dict(descendant_font_obj.dict);
+    }
+    return false;
+}
+
+WinPdfDocument::CidToGidMapData WinPdfDocument::load_cid_to_gid_map(const WinPdfObject& font_obj) {
+    CidToGidMapData cid_to_gid;
+
+    WinPdfObject descendant_font_obj;
+    if (!resolve_type0_descendant_font(font_obj, descendant_font_obj)) return cid_to_gid;
+
+    std::string cid_to_gid_map_val = parse_name_value_after_key(descendant_font_obj.dict, "/CIDToGIDMap");
+    if (cid_to_gid_map_val == "Identity") {
+        cid_to_gid.has_map = true;
+        cid_to_gid.identity = true;
+        return cid_to_gid;
+    }
+
+    int cid_to_gid_map_ref = parse_ref_id_after_key(descendant_font_obj.dict, "/CIDToGIDMap");
+    if (cid_to_gid_map_ref > 0) {
+        WinPdfObject map_obj = read_obj(cid_to_gid_map_ref);
+        if (map_obj.is_stream && !map_obj.stream.empty()) {
+            std::vector<uint8_t> decoded_map = decode_stream_data(map_obj.stream, map_obj.dict, this);
+            if (decoded_map.empty()) decoded_map = map_obj.stream;
+
+            if (!decoded_map.empty() && decoded_map.size() % 2 == 0) {
+                cid_to_gid.has_map = true;
+                cid_to_gid.identity = false;
+                size_t num_entries = decoded_map.size() / 2;
+                cid_to_gid.values.resize(num_entries);
+                for (size_t i = 0; i < num_entries; ++i) {
+                    uint16_t gid = (static_cast<uint16_t>(decoded_map[2 * i]) << 8) | static_cast<uint16_t>(decoded_map[2 * i + 1]);
+                    cid_to_gid.values[i] = gid;
+                }
+            }
+        }
+    }
+    return cid_to_gid;
+}
+
+void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font_obj,
+                                                        std::unordered_map<int, std::vector<int>>& unicode_map,
+                                                        const std::map<int, std::string>& diff_names) {
+#ifdef WINEXTRACT_USE_FREETYPE
+    FT_Library library = get_freetype_library();
+    if (!library) return;
+
+    const bool is_type0_subtype = parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0";
+    const CidToGidMapData cid_to_gid = load_cid_to_gid_map(font_obj);
+
+    std::string descriptor_dict;
+    resolve_font_descriptor_dict(font_obj, descriptor_dict);
+
+    std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFont");
+    if (base_font_name.empty() && is_type0_subtype) {
+        WinPdfObject descendant_font_obj;
+        if (resolve_type0_descendant_font(font_obj, descendant_font_obj)) {
+            base_font_name = parse_name_value_after_key(descendant_font_obj.dict, "/BaseFont");
+        }
+    }
+    base_font_name = normalize_pdf_font_name(base_font_name);
+
+    FT_Face face = nullptr;
+    std::vector<uint8_t> font_bytes;
+
+    if (!descriptor_dict.empty()) {
+        int font_file_ref = parse_ref_id_after_key(descriptor_dict, "/FontFile2");
+        if (font_file_ref <= 0) font_file_ref = parse_ref_id_after_key(descriptor_dict, "/FontFile");
+        if (font_file_ref <= 0) font_file_ref = parse_ref_id_after_key(descriptor_dict, "/FontFile3");
+
+        if (font_file_ref > 0) {
+            WinPdfObject font_file_obj = read_obj(font_file_ref);
+            if (font_file_obj.is_stream && !font_file_obj.stream.empty()) {
+                font_bytes = decode_stream_data(font_file_obj.stream, font_file_obj.dict, this);
+                if (font_bytes.empty()) font_bytes = font_file_obj.stream;
+            }
+        }
+    }
+
+    uint64_t font_hash = fnv1a_hash_bytes(font_bytes);
+    if (!base_font_name.empty()) font_hash ^= fnv1a_hash_string(base_font_name);
+    std::shared_ptr<std::unordered_map<unsigned int, int>> cached_gid_map;
+
+    {
+        std::shared_lock<std::shared_mutex> lock(g_global_freetype_cache_mutex);
+        auto it = g_global_freetype_cache.find(font_hash);
+        if (it != g_global_freetype_cache.end()) cached_gid_map = it->second;
+    }
+
+    if (!cached_gid_map) {
+        if (!font_bytes.empty()) {
+            FT_New_Memory_Face(library, reinterpret_cast<const FT_Byte*>(font_bytes.data()), static_cast<FT_Long>(font_bytes.size()), 0, &face);
+        }
+        if (!face) {
+            std::vector<std::string> system_candidates = get_system_font_candidates(base_font_name);
+            for (const std::string& candidate : system_candidates) {
+                if (FT_New_Face(library, candidate.c_str(), 0, &face) == 0) break;
+            }
+        }
+        if (!face) return;
+
+        auto gid_to_unicode = std::make_shared<std::unordered_map<unsigned int, int>>();
+
+        auto collect_gid_unicode = [&]() {
+            if (face->charmap == nullptr) return;
+            FT_UInt gid = 0;
+            FT_ULong charcode = FT_Get_First_Char(face, &gid);
+            while (gid != 0) {
+                if (charcode > 0 && charcode <= 0x10FFFFUL && gid_to_unicode->find(gid) == gid_to_unicode->end()) {
+                    (*gid_to_unicode)[gid] = static_cast<int>(charcode);
+                }
+                charcode = FT_Get_Next_Char(face, charcode, &gid);
+            }
+            if (FT_HAS_GLYPH_NAMES(face)) {
+                for (FT_UInt g = 0; g < (FT_UInt)face->num_glyphs; ++g) {
+                    if (gid_to_unicode->find(g) == gid_to_unicode->end()) {
+                        char gname[64];
+                        if (FT_Get_Glyph_Name(face, g, gname, sizeof(gname)) == 0) {
+                            int cp = glyph_name_to_unicode_fitz(std::string(gname));
+                            if (cp > 0) (*gid_to_unicode)[g] = cp;
+                        }
+                    }
+                }
+            }
+        };
+
+        FT_CharMap saved_charmap = face->charmap;
+        if (FT_Select_Charmap(face, FT_ENCODING_UNICODE) == 0) collect_gid_unicode();
+        if (face->num_charmaps > 0 && face->charmaps != nullptr) {
+            for (int ci = 0; ci < face->num_charmaps; ++ci) {
+                FT_CharMap cmap = face->charmaps[ci];
+                if (cmap == nullptr || cmap == face->charmap) continue;
+                if (FT_Set_Charmap(face, cmap) == 0) collect_gid_unicode();
+            }
+        }
+        if (saved_charmap != nullptr && face->charmap != saved_charmap) {
+            FT_Set_Charmap(face, saved_charmap);
+        }
+
+        cached_gid_map = gid_to_unicode;
+        {
+            std::unique_lock<std::shared_mutex> lock(g_global_freetype_cache_mutex);
+            g_global_freetype_cache[font_hash] = cached_gid_map;
+        }
+    }
+
+    auto lookup_gid_for_code = [&](int code) -> FT_UInt {
+        if (code < 0) return 0;
+        if (is_type0_subtype) {
+            if (cid_to_gid.has_map) {
+                if (cid_to_gid.identity) return static_cast<FT_UInt>(code);
+                if (static_cast<size_t>(code) < cid_to_gid.values.size()) {
+                    return static_cast<FT_UInt>(cid_to_gid.values[static_cast<size_t>(code)]);
+                }
+            }
+            return 0;
+        }
+        FT_UInt gid = 0;
+        if (face) {
+            auto diff_it = diff_names.find(code);
+            if (diff_it != diff_names.end() && FT_HAS_GLYPH_NAMES(face)) {
+                gid = FT_Get_Name_Index(face, const_cast<FT_String*>(diff_it->second.c_str()));
+            }
+            if (gid == 0) {
+                char char_name[32];
+                snprintf(char_name, sizeof(char_name), "char%02X", code);
+                gid = FT_Get_Name_Index(face, char_name);
+            }
+            
+        }
+        return gid;
+    };
+
+    std::vector<int> codes_to_process;
+    if (is_type0_subtype) {
+        if (cid_to_gid.has_map) {
+            int max_code = cid_to_gid.identity ? 65535 : static_cast<int>(cid_to_gid.values.size());
+            for (int c = 0; c < max_code; ++c) codes_to_process.push_back(c);
+        }
+    } else {
+        for (int c = 0; c < 256; ++c) codes_to_process.push_back(c);
+    }
+
+    for (int code : codes_to_process) {
+        if (unicode_map.find(code) != unicode_map.end() && !unicode_map[code].empty() && unicode_map[code][0] != 0xFFFD) {
+            continue; // Already has a valid mapping
+        }
+
+        int cp = -1;
+        if (is_type0_subtype) {
+            FT_UInt gid = lookup_gid_for_code(code);
+            if (gid > 0) {
+                auto git = cached_gid_map->find(gid);
+                if (git != cached_gid_map->end()) cp = git->second;
+            }
+        } else {
+            auto diff_it = diff_names.find(code);
+            if (diff_it != diff_names.end()) cp = glyph_name_to_unicode_fitz(diff_it->second);
+            if (cp <= 0 && face) {
+                FT_UInt gid = lookup_gid_for_code(code);
+                if (gid > 0) {
+                    auto git = cached_gid_map->find(gid);
+                    if (git != cached_gid_map->end()) cp = git->second;
+                }
+            }
+        }
+        if (cp > 0 && cp <= 0x10FFFF) unicode_map[code] = {cp};
+    }
+    if (face) FT_Done_Face(face);
+#endif
+}
+
+std::map<std::string, int> WinPdfDocument::get_page_font_name_to_id(int page_idx) {
+    std::lock_guard<std::recursive_mutex> lock(cache_mutex);
+    std::map<std::string, int> out;
+    if (page_idx < 0 || page_idx >= static_cast<int>(page_ids.size()) || page_ids.empty()) return out;
+
+    std::string resources_dict;
+    int node_id = page_ids[page_idx];
+    std::unordered_set<int> _visited_nodes;
+    while (node_id > 0 && resources_dict.empty()) {
+        if (!_visited_nodes.insert(node_id).second) break;
+        WinPdfObject node = read_obj(node_id);
+
+        int resources_ref = parse_ref_id_after_key(node.dict, "/Resources");
+        if (resources_ref > 0) {
+            WinPdfObject resources_obj = read_obj(resources_ref);
+            resources_dict = resources_obj.dict;
+        }
+        if (resources_dict.empty()) extract_inline_dict_after_key(node.dict, "/Resources", resources_dict);
+        if (!resources_dict.empty()) break;
+        node_id = parse_ref_id_after_key(node.dict, "/Parent");
+    }
+
+    if (resources_dict.empty()) return out;
+
+    std::string font_dict;
+    int font_ref = parse_ref_id_after_key(resources_dict, "/Font");
+    if (font_ref > 0) {
+        WinPdfObject font_obj = read_obj(font_ref);
+        font_dict = font_obj.dict;
+    }
+    if (font_dict.empty()) extract_inline_dict_after_key(resources_dict, "/Font", font_dict);
+    if (font_dict.empty()) return out;
+
+    return parse_font_refs_from_dict(font_dict);
+}
+
+std::shared_ptr<const std::unordered_map<int, WinUnicodeSequence>> WinPdfDocument::get_font_unicode_map_by_id(int font_obj_id) {
+    std::lock_guard<std::recursive_mutex> lock(cache_mutex);
+    auto it = cached_unicode_maps.find(font_obj_id);
+    if (it != cached_unicode_maps.end()) return it->second;
+    return nullptr;
+}
+
+bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
+    std::lock_guard<std::recursive_mutex> lock(cache_mutex);
+    auto it = cached_unicode_maps.find(font_obj_id);
+    if (it == cached_unicode_maps.end()) return false;
+
+    std::unordered_map<int, std::vector<int>> cmap = *(it->second);
+    WinPdfObject font_obj = read_obj(font_obj_id);
+    
+    std::string encoding_dict;
+    std::string encoding_name = parse_name_value_after_key(font_obj.dict, "/Encoding");
+    if (encoding_name.empty()) {
+        int encoding_ref = parse_ref_id_after_key(font_obj.dict, "/Encoding");
+        if (encoding_ref > 0) {
+            WinPdfObject enc_obj = read_obj(encoding_ref);
+            encoding_dict = enc_obj.dict;
+            encoding_name = parse_name_value_after_key(enc_obj.dict, "/BaseEncoding");
+            if (encoding_name.empty()) encoding_name = parse_name_value_after_key(enc_obj.body, "/BaseEncoding");
+        }
+    }
+    if (encoding_dict.empty()) {
+        extract_inline_dict_after_key(font_obj.dict, "/Encoding", encoding_dict);
+        if (!encoding_dict.empty() && encoding_name.empty()) {
+            encoding_name = parse_name_value_after_key(encoding_dict, "/BaseEncoding");
+        }
+    }
+    std::map<int, std::string> diff_names;
+    if (!encoding_dict.empty()) {
+        std::map<int, int> dummy;
+        apply_differences_to_map(encoding_dict, dummy, &diff_names);
+    }
+
+    fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+
+    cached_unicode_maps[font_obj_id] = std::make_shared<const std::unordered_map<int, WinUnicodeSequence>>(std::move(cmap));
+    return true;
 }
 
 } // namespace WinExtract

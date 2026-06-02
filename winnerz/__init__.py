@@ -552,20 +552,20 @@ class Page:
         mode = mode.lower()
 
         if mode == "dict":
-            return _call_text_json_compat(self.doc._core_doc.extract_dict, self.index, sort)
+            return _call_text_json_compat(self.doc._core_doc.get_dict, self.index, sort)
         if mode == "rawdict":
-            return _call_text_json_compat(self.doc._core_doc.extract_rawdict, self.index, sort)
+            return _call_text_json_compat(self.doc._core_doc.get_rawdict, self.index, sort)
         if mode == "blocks":
-            return _call_text_json_compat(self.doc._core_doc.extract_blocks, self.index, sort)
+            return _call_text_json_compat(self.doc._core_doc.get_blocks, self.index, sort)
         if mode == "text":
             if hasattr(self.doc._core_doc, "extract_text_plain"):
-                return _call_text_json_compat(self.doc._core_doc.extract_text_plain, self.index, sort)
-            blocks = _call_text_json_compat(self.doc._core_doc.extract_blocks, self.index, sort)
+                return _call_text_json_compat(self.doc._core_doc.get_text_plain, self.index, sort)
+            blocks = _call_text_json_compat(self.doc._core_doc.get_blocks, self.index, sort)
             return "".join(block.get("text", "") for block in blocks)
         raise ValueError("Unsupported text mode: {}".format(mode))
 
     def get_drawings(self):
-        raw = self.doc._core_doc.extract_drawings(self.index)
+        raw = self.doc._core_doc.get_drawings(self.index)
         mapped = []
         for d in raw:
             item = dict(d)
@@ -610,7 +610,7 @@ class Page:
 
         data = None
         try:
-            core_data = self.doc._core_doc.render_page_to_bytes(self.index, float(scale), clip_tuple)
+            core_data = self.doc._core_doc.render_page(self.index, float(scale), clip_tuple)
             if not _render_data_is_placeholder(core_data):
                 data = core_data
         except Exception as e:
@@ -843,14 +843,14 @@ class Document:
     def __len__(self):
         return self._page_count
 
-    def redact_text_rects(self, output_path, page_index, rects):
-        return self._core_doc.redact_text_rects(output_path, page_index, rects, 0.0)
+    def redact_rects(self, output_path, page_index, rects):
+        return self._core_doc.redact_rects(output_path, page_index, rects, 0.0)
 
-    def redact_text_multiple_pages_to_bytes(self, page_rects_map):
-        return self._core_doc.redact_multiple_pages_to_bytes(page_rects_map, 0.0)
+    def redact_pages_bytes(self, page_rects_map):
+        return self._core_doc.redact_pages_bytes(page_rects_map, 0.0)
 
-    def redact_text_multiple_pages(self, output_path, page_rects_map):
-        return self._core_doc.redact_multiple_pages(output_path, page_rects_map, 0.0)
+    def redact_pages(self, output_path, page_rects_map):
+        return self._core_doc.redact_pages(output_path, page_rects_map, 0.0)
 
     def clear_page_cache(self):
         return self._core_doc.clear_page_cache()
@@ -860,7 +860,7 @@ class Document:
         Extract text from all pages concurrently using C++ threads.
         This bypasses the Python GIL and scales with the number of CPU cores.
         """
-        return self._core_doc.extract_all_text_concurrent()
+        return self._core_doc.get_all_text()
 
     def save(self, path):
         with _silence_c_stderr():

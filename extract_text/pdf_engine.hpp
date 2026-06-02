@@ -16,6 +16,7 @@
 #include "decoder_inflate.hpp"
 #include "mapped_file.hpp"
 #include <mutex>
+#include <shared_mutex>
 
 namespace WinExtract {
 
@@ -167,6 +168,21 @@ public:
     
     // Giải phóng bộ nhớ cache (page-based flush) để tránh OOM
     void clear_page_cache();
+
+    std::map<std::string, int> get_page_font_name_to_id(int page_idx);
+    bool patch_font_unicode_map_lazily(int font_obj_id);
+    std::shared_ptr<const std::unordered_map<int, WinUnicodeSequence>> get_font_unicode_map_by_id(int font_obj_id);
+    
+    struct CidToGidMapData {
+        bool has_map = false;
+        bool identity = false;
+        std::vector<uint16_t> values;
+    };
+    bool resolve_type0_descendant_font(const WinPdfObject& font_obj, WinPdfObject& descendant_font_obj);
+    bool resolve_font_descriptor_dict(const WinPdfObject& font_obj, std::string& descriptor_dict);
+    CidToGidMapData load_cid_to_gid_map(const WinPdfObject& font_obj);
+    void fill_missing_unicode_from_freetype(const WinPdfObject& font_obj, std::unordered_map<int, std::vector<int>>& unicode_map, const std::map<int, std::string>& diff_names);
+
     
     // Tìm object bằng ID
     WinPdfObject read_obj(int id);

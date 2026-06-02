@@ -50,7 +50,7 @@ Represents a PDF document instance. It manages the lifecycle of the underlying f
 *   `__len__()`: Returns the total number of pages in the document.
 *   `get_all_text()`: A highly optimized utility that utilizes C++ multi-threading to extract text from all pages. It uses a **dynamic hardware-concurrency batching** mechanism to process pages in chunks (scaling automatically with the number of CPU cores). This entirely bypasses the Python GIL and prevents thread-exhaustion (`EAGAIN`) on massive 5000+ page PDFs.
 *   `tobytes()`: (Zero-Disk) Returns the finalized PDF as a raw byte array directly from RAM, avoiding any disk I/O.
-*   `redact_text_multiple_pages_to_bytes(page_rects_map)`: (Native C++) Performs parallel Block Redaction across multiple pages and returns the cleaned PDF as `bytes` directly in RAM. Use with caution on very large files to avoid memory pressure.
+*   `redact_pages_bytes(page_rects_map)`: (Native C++) Performs parallel Block Redaction across multiple pages and returns the cleaned PDF as `bytes` directly in RAM. Use with caution on very large files to avoid memory pressure.
 *   `close()`: Cleans up temporary resources, such as decrypted temporary files and in-memory editing buffers.
 
 ### Page

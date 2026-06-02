@@ -412,6 +412,7 @@ class PyWinDocument {
 public:
     std::string path;
     std::shared_ptr<WinExtract::WinPdfDocument> doc;
+    std::vector<uint8_t> mem_data;
 
     PyWinDocument(const std::string& pdf_path) : path(pdf_path) {
         doc = WinExtract::WinPdfDocument::open(pdf_path);
@@ -422,8 +423,8 @@ public:
 
     PyWinDocument(const py::bytes& pdf_bytes) : path("<memory>") {
         std::string str_bytes = pdf_bytes;
-        std::vector<uint8_t> data(str_bytes.begin(), str_bytes.end());
-        doc = WinExtract::WinPdfDocument::open_from_memory(data);
+        mem_data = std::vector<uint8_t>(str_bytes.begin(), str_bytes.end());
+        doc = WinExtract::WinPdfDocument::open_from_memory(mem_data);
         if (!doc) {
             throw std::runtime_error("Cannot open PDF from bytes or xref not found");
         }
@@ -485,7 +486,8 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
         nullptr,
         nullptr,
         nullptr,
-        nullptr);
+        nullptr
+    );
 
     ExtractedPage extracted;
     extracted.page = dev.finish_page();
@@ -961,13 +963,13 @@ PYBIND11_MODULE(winnerz_core, m) {
                  return LoadPageRect(self.doc, page_index);
              },
              py::arg("page_index") = 0)
-        .def("extract_text_plain",
+        .def("get_text_plain",
              [](PyWinDocument& self, int page_index, bool sort) {
                  return ExtractTextPlain(self.doc, page_index, sort);
              },
              py::arg("page_index") = 0,
              py::arg("sort") = false)
-        .def("extract_dict",
+        .def("get_dict",
              [](PyWinDocument& self, int page_index, bool sort) {
                  const ExtractedPage extracted = ExtractTextPage(self.doc, page_index, sort);
                  auto res = DictToRawPyDict(extracted, page_index, false, sort);
@@ -976,7 +978,7 @@ PYBIND11_MODULE(winnerz_core, m) {
              },
              py::arg("page_index") = 0,
              py::arg("sort") = false)
-        .def("extract_rawdict",
+        .def("get_rawdict",
              [](PyWinDocument& self, int page_index, bool sort) {
                  const ExtractedPage extracted = ExtractTextPage(self.doc, page_index, sort);
                  auto res = DictToRawPyDict(extracted, page_index, true, sort);
@@ -985,7 +987,7 @@ PYBIND11_MODULE(winnerz_core, m) {
              },
              py::arg("page_index") = 0,
              py::arg("sort") = false)
-        .def("extract_blocks",
+        .def("get_blocks",
              [](PyWinDocument& self, int page_index, bool sort) {
                  const ExtractedPage extracted = ExtractTextPage(self.doc, page_index, sort);
                  auto res = BlocksToRawPyList(extracted, sort);
@@ -1002,32 +1004,49 @@ PYBIND11_MODULE(winnerz_core, m) {
                  return res;
              },
              py::arg("page_index") = 0)
-        .def("extract_all_text_concurrent",
+                                .def("get_all_text",
              [](PyWinDocument& self) {
                  int page_count = self.doc->count_pages();
-                 std::vector<std::future<std::string>> futures;
+                 int num_threads = std::thread::hardware_concurrency();
+                 if (num_threads <= 0) num_threads = 4;
+                 if (num_threads > page_count) num_threads = page_count;
+
+                 std::vector<std::string> page_results(page_count);
+                 std::vector<std::thread> threads;
+                 std::atomic<int> current_page{0};
+
+                 for (int t = 0; t < num_threads; ++t) {
+                     threads.emplace_back([&self, page_count, &page_results, &current_page]() {
+                         // Thread-local document instance (100% lock-free concurrency!)
+                         std::shared_ptr<WinExtract::WinPdfDocument> thread_doc;
+                         if (self.path == "<memory>") {
+                             thread_doc = WinExtract::WinPdfDocument::open_from_memory(self.mem_data);
+                         } else {
+                             thread_doc = WinExtract::WinPdfDocument::open(self.path);
+                         }
+                         if (!thread_doc) return;
+
+                         while (true) {
+                             int i = current_page.fetch_add(1);
+                             if (i >= page_count) break;
+                             page_results[i] = ExtractTextPlain(thread_doc, i, false);
+                         }
+                     });
+                 }
+
+                 for (auto& t : threads) {
+                     if (t.joinable()) t.join();
+                 }
+
                  std::string result;
-                 
-                 unsigned int max_threads = std::thread::hardware_concurrency();
-                 if (max_threads == 0) max_threads = 4;
-                 
-                 for (int i = 0; i < page_count; i += max_threads) {
-                     futures.clear();
-                     int chunk_end = std::min(i + (int)max_threads, page_count);
-                     for (int j = i; j < chunk_end; ++j) {
-                         futures.push_back(std::async(std::launch::async, [&self, j]() {
-                             return ExtractTextPlain(self.doc, j, false);
-                         }));
-                     }
-                     for (int j = 0; j < chunk_end - i; ++j) {
-                         result += futures[j].get();
-                         if (i + j < page_count - 1) result += "\x0C";
-                     }
+                 for (int i = 0; i < page_count; ++i) {
+                     result += page_results[i];
+                     if (i < page_count - 1) result += "\x0C";
                  }
                  return result;
              },
              py::call_guard<py::gil_scoped_release>())
-        .def("extract_drawings",
+        .def("get_drawings",
              [](PyWinDocument& self, int page_index) {
                  auto res = ExtractDrawingsToPyList(self.path, page_index);
                  self.doc->clear_page_cache();
@@ -1035,7 +1054,7 @@ PYBIND11_MODULE(winnerz_core, m) {
              },
              py::arg("page_index") = 0)
         
-                .def("redact_multiple_pages_to_bytes",
+                .def("redact_pages_bytes",
              [](PyWinDocument& self,
                 const std::map<int, std::vector<std::array<float, 4>>>& page_rects_map,
                 float min_overlap_ratio) {
@@ -1069,7 +1088,7 @@ PYBIND11_MODULE(winnerz_core, m) {
              },
              py::arg("page_rects_map"),
              py::arg("min_overlap_ratio") = 0.0f)
-        .def("redact_multiple_pages",
+        .def("redact_pages",
              [](PyWinDocument& self,
                 const std::string& output_pdf,
                 const std::map<int, std::vector<std::array<float, 4>>>& page_rects_map,
@@ -1105,7 +1124,7 @@ PYBIND11_MODULE(winnerz_core, m) {
              py::arg("output_pdf"),
              py::arg("page_rects_map"),
              py::arg("min_overlap_ratio") = 0.0f)
-.def("redact_text_rects",
+.def("redact_rects",
              [](PyWinDocument& self,
                 const std::string& output_pdf,
                 int page_index,
@@ -1139,7 +1158,7 @@ PYBIND11_MODULE(winnerz_core, m) {
              py::arg("page_index"),
              py::arg("rects"),
              py::arg("min_overlap_ratio") = 0.0f)
-        .def("render_page_to_bytes",
+        .def("render_page",
              [](PyWinDocument& self,
                 int page_index,
                 float scale,
