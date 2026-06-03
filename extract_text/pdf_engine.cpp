@@ -6741,7 +6741,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             if (is_invalid_cp(cp)) {
                 if (apply_heuristic_vni_tcvn3(base_font_name, code, cp)) {
                     // handled
-                } else if (consecutive_ocr_failures < 5) {
+                } else if (consecutive_ocr_failures < 20) {
                     std::vector<int> ocr_cps = run_micro_ocr_on_glyph(face, gid);
                     if (!ocr_cps.empty()) {
                         unicode_map[code] = ocr_cps;
