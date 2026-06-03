@@ -47,7 +47,9 @@ sdist.exclude = [
     "build-*/**/*",
     "test_venv/**/*",
     ".venv*/**/*",
-    "cmap-resources-master/**/*"
+    "cmap-resources-master/**/*",
+    "data/**/*",
+    "temp_uploads/**/*"
 ]
 wheel.packages = ["winnerz"]
 
