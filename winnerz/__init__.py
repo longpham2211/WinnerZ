@@ -15,10 +15,11 @@ import logging
 logger = logging.getLogger("winnerz")
 if not logger.handlers:
     handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(levelname)s - %(name)s - %(message)s')
+    formatter = logging.Formatter("%(levelname)s - %(name)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.WARNING)
+
 
 @contextlib.contextmanager
 def _silence_c_stderr():
@@ -40,6 +41,7 @@ def _silence_c_stderr():
             os.close(devnull_fd)
         except Exception:
             pass
+
 
 _DLL_DIR_HANDLES = []
 _DLL_DIRS_READY = False
@@ -94,6 +96,7 @@ def _ensure_windows_dll_dirs():
             _DLL_DIR_HANDLES.append(os.add_dll_directory(str(p)))
 
     _DLL_DIRS_READY = True
+
 
 def _dependency_error_message(exc):
     text = str(exc)
@@ -214,7 +217,9 @@ def _load_core():
                     raise RuntimeError(
                         "winnerz_core module is not built yet. Build with WINNERZ_BUILD_PYTHON_WRAPPER=ON."
                     ) from exc
-                raise RuntimeError("Failed to import winnerz_core: {}".format(exc)) from exc
+                raise RuntimeError(
+                    "Failed to import winnerz_core: {}".format(exc)
+                ) from exc
             except ImportError as exc:
                 dep_msg = _dependency_error_message(exc)
                 if dep_msg:
@@ -234,11 +239,14 @@ def _load_core():
 
                     raise RuntimeError(
                         "winnerz_core binary appears truncated ('file too short'). "
-                        "Detected binaries: {}. Rebuild winnerz_core and deploy by atomic replace."
-                        .format(_core_binary_diagnostics())
+                        "Detected binaries: {}. Rebuild winnerz_core and deploy by atomic replace.".format(
+                            _core_binary_diagnostics()
+                        )
                     ) from exc
 
-                raise RuntimeError("Failed to import winnerz_core: {}".format(exc)) from exc
+                raise RuntimeError(
+                    "Failed to import winnerz_core: {}".format(exc)
+                ) from exc
             except Exception as exc:
                 raise RuntimeError(
                     "Failed to import winnerz_core: {}".format(exc)
@@ -246,8 +254,9 @@ def _load_core():
 
         if last_exc is not None:
             raise RuntimeError(
-                "Failed to import winnerz_core after retries: {}. Detected binaries: {}"
-                .format(last_exc, _core_binary_diagnostics())
+                "Failed to import winnerz_core after retries: {}. Detected binaries: {}".format(
+                    last_exc, _core_binary_diagnostics()
+                )
             ) from last_exc
 
         raise RuntimeError("Failed to import winnerz_core after retries.")
@@ -335,12 +344,15 @@ def _open_preview_pdfium_doc(pdf_path):
 
     return doc
 
+
 def _render_page_with_pdfium(pdf_path, page_index, scale, clip_tuple):
     with _silence_c_stderr():
         try:
             from PIL import Image
         except Exception as exc:
-            raise RuntimeError("Pillow is required for pypdfium2 preview backend") from exc
+            raise RuntimeError(
+                "Pillow is required for pypdfium2 preview backend"
+            ) from exc
 
         doc = _open_preview_pdfium_doc(pdf_path)
         page_count = len(doc)
@@ -411,12 +423,16 @@ embed {{ width: 100%; height: 100%; border: 0; display: block; }}
 <embed src=\"{}\" type=\"application/pdf\" />
 </body>
 </html>
-""".format(pdf_uri)
+""".format(
+        pdf_uri
+    )
 
     png_bytes = None
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
-        context = browser.new_context(viewport={"width": full_w, "height": full_h}, device_scale_factor=1.0)
+        context = browser.new_context(
+            viewport={"width": full_w, "height": full_h}, device_scale_factor=1.0
+        )
         page = context.new_page()
         page.set_content(html, wait_until="networkidle")
         png_bytes = page.screenshot(full_page=False, type="png")
@@ -424,7 +440,9 @@ embed {{ width: 100%; height: 100%; border: 0; display: block; }}
         browser.close()
 
     image = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-    left, top, right, bottom = _compute_crop_box_pixels(clip_tuple, page_w, page_h, float(scale))
+    left, top, right, bottom = _compute_crop_box_pixels(
+        clip_tuple, page_w, page_h, float(scale)
+    )
     image = image.crop((left, top, right, bottom))
     width, height = image.size
     rgba = image.tobytes("raw", "RGBA")
@@ -451,13 +469,19 @@ def _render_page_preview_data(pdf_path, page_index, scale, clip_tuple, page_rect
 
     if backend in ("auto", "playwright"):
         try:
-            return _render_page_with_playwright(pdf_path, page_index, scale, clip_tuple, page_rect)
+            return _render_page_with_playwright(
+                pdf_path, page_index, scale, clip_tuple, page_rect
+            )
         except Exception as exc:
             errors.append("playwright: {}".format(exc))
             if backend == "playwright":
                 raise
 
-    raise RuntimeError("No preview backend available ({})".format("; ".join(errors) if errors else backend))
+    raise RuntimeError(
+        "No preview backend available ({})".format(
+            "; ".join(errors) if errors else backend
+        )
+    )
 
 
 class Rect:
@@ -554,13 +578,21 @@ class Page:
         if mode == "dict":
             return _call_text_json_compat(self.doc._core_doc.get_dict, self.index, sort)
         if mode == "rawdict":
-            return _call_text_json_compat(self.doc._core_doc.get_rawdict, self.index, sort)
+            return _call_text_json_compat(
+                self.doc._core_doc.get_rawdict, self.index, sort
+            )
         if mode == "blocks":
-            return _call_text_json_compat(self.doc._core_doc.get_blocks, self.index, sort)
+            return _call_text_json_compat(
+                self.doc._core_doc.get_blocks, self.index, sort
+            )
         if mode == "text":
             if hasattr(self.doc._core_doc, "extract_text_plain"):
-                return _call_text_json_compat(self.doc._core_doc.get_text_plain, self.index, sort)
-            blocks = _call_text_json_compat(self.doc._core_doc.get_blocks, self.index, sort)
+                return _call_text_json_compat(
+                    self.doc._core_doc.get_text_plain, self.index, sort
+                )
+            blocks = _call_text_json_compat(
+                self.doc._core_doc.get_blocks, self.index, sort
+            )
             return "".join(block.get("text", "") for block in blocks)
         raise ValueError("Unsupported text mode: {}".format(mode))
 
@@ -606,11 +638,18 @@ class Page:
             if isinstance(clip, Rect):
                 clip_tuple = clip.as_tuple()
             else:
-                clip_tuple = (float(clip[0]), float(clip[1]), float(clip[2]), float(clip[3]))
+                clip_tuple = (
+                    float(clip[0]),
+                    float(clip[1]),
+                    float(clip[2]),
+                    float(clip[3]),
+                )
 
         data = None
         try:
-            core_data = self.doc._core_doc.render_page(self.index, float(scale), clip_tuple)
+            core_data = self.doc._core_doc.render_page(
+                self.index, float(scale), clip_tuple
+            )
             if not _render_data_is_placeholder(core_data):
                 data = core_data
         except Exception as e:
@@ -618,7 +657,9 @@ class Page:
             data = None
 
         if data is None:
-            data = _render_page_preview_data(self.doc.path, self.index, float(scale), clip_tuple, self.rect)
+            data = _render_page_preview_data(
+                self.doc.path, self.index, float(scale), clip_tuple, self.rect
+            )
 
         return Pixmap(
             data["width"],
@@ -634,7 +675,9 @@ class Page:
             if isinstance(r, Rect):
                 serializable_rects.append(list(r.as_tuple()))
             else:
-                serializable_rects.append([float(r[0]), float(r[1]), float(r[2]), float(r[3])])
+                serializable_rects.append(
+                    [float(r[0]), float(r[1]), float(r[2]), float(r[3])]
+                )
 
         return self.doc._core_doc.redact_text_rects(
             output_path,
@@ -645,9 +688,10 @@ class Page:
 
     def clean_contents(self):
         import pypdfium2.raw as pdfium_c
+
         pdfium_doc = self.doc._get_pdfium_edit_doc()
         pdf_page = pdfium_doc[self.index]
-        
+
         try:
             for obj in list(pdf_page.get_objects()):
                 pdfium_c.FPDFPage_RemoveObject(pdf_page.raw, obj.raw)
@@ -664,69 +708,75 @@ class Page:
         pdf_page = pdfium_doc[self.index]
         try:
             import pypdfium2 as pdfium
+
             pdf_img = pdfium.PdfImage.new(pdfium_doc)
-            
+
             if stream:
                 import io
                 from PIL import Image
+
                 img = Image.open(io.BytesIO(stream)).convert("RGBA")
                 bitmap = pdfium.PdfBitmap.from_pil(img)
                 pdf_img.set_bitmap(bitmap)
-                
+
             if hasattr(rect, "as_tuple"):
                 x0, y0, x1, y1 = rect.as_tuple()
             else:
                 x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
-                
+
             page_w = pdf_page.get_width()
             page_h = pdf_page.get_height()
             w = x1 - x0
             h = y1 - y0
             rot = pdf_page.get_rotation()
-            
+
             if rot == 0:
                 m_args = (w, 0, 0, h, x0, page_h - y1)
             elif rot == 90:
                 m_args = (0, w, -h, 0, y1, x0)
             elif rot == 180:
                 m_args = (-w, 0, 0, -h, page_w - x0, y1)
-            else: # rot == 270
+            else:  # rot == 270
                 m_args = (0, -w, h, 0, page_h - y1, page_w - x0)
-            
+
             try:
                 matrix = pdfium.PdfMatrix(*m_args)
             except AttributeError:
                 matrix = pdfium.pdfium_c.FS_MATRIX(*m_args)
-                
+
             pdf_img.set_matrix(matrix)
             pdf_page.insert_obj(pdf_img)
             pdf_page.gen_content()
         finally:
             pdf_page.close()
 
-    def show_pdf_page(self, rect, doc_src, page_idx, overlay=True, keep_proportion=True):
+    def show_pdf_page(
+        self, rect, doc_src, page_idx, overlay=True, keep_proportion=True
+    ):
         import pypdfium2.raw as pdfium_c
         import pypdfium2 as pdfium
-        
+
         pdfium_doc = self.doc._get_pdfium_edit_doc()
         pdf_page = pdfium_doc[self.index]
-        
+
         src_pdfium_doc = doc_src._get_pdfium_edit_doc()
         src_page = src_pdfium_doc[page_idx]
         try:
             src_w, src_h = src_page.get_width(), src_page.get_height()
-            
-            xobj = pdfium_c.FPDF_NewXObjectFromPage(pdfium_doc.raw, src_pdfium_doc.raw, page_idx)
+
+            xobj = pdfium_c.FPDF_NewXObjectFromPage(
+                pdfium_doc.raw, src_pdfium_doc.raw, page_idx
+            )
             form_obj = pdfium_c.FPDF_NewFormObjectFromXObject(xobj)
-            
+
             if hasattr(rect, "as_tuple"):
                 x0, y0, x1, y1 = rect.as_tuple()
             else:
                 x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
-                
+
             target_w = float(x1 - x0)
             target_h = float(y1 - y0)
-            
+
             if keep_proportion:
                 scale = min(target_w / float(src_w), target_h / float(src_h))
                 w = float(src_w) * scale
@@ -738,25 +788,25 @@ class Page:
                 h = target_h
                 dx = x0
                 dy = y0
-                
+
             page_w = pdf_page.get_width()
             page_h = pdf_page.get_height()
             rot = pdf_page.get_rotation()
-            
+
             if rot == 0:
                 a, b, c, d, e, f = w, 0, 0, h, dx, page_h - dy - h
             elif rot == 90:
                 a, b, c, d, e, f = 0, w, -h, 0, dy + h, dx
             elif rot == 180:
                 a, b, c, d, e, f = -w, 0, 0, -h, page_w - dx, dy + h
-            else: # rot == 270
+            else:  # rot == 270
                 a, b, c, d, e, f = 0, -w, h, 0, page_h - dy - h, page_w - dx
-                
-            a /= float(src_w )
+
+            a /= float(src_w)
             b /= float(src_w)
             c /= float(src_h)
             d /= float(src_h)
-            
+
             pdfium_c.FPDFPageObj_Transform(form_obj, a, b, c, d, e, f)
             pdfium_c.FPDFPage_InsertObject(pdf_page.raw, form_obj)
             pdf_page.gen_content()
@@ -765,13 +815,13 @@ class Page:
             pdf_page.close()
 
 
-
 class Document:
     """Represents a PDF document."""
+
     def __init__(self, path_or_bytes):
         winnerz_core = _load_core()
         import pypdfium2 as pdfium
-        
+
         if isinstance(path_or_bytes, bytes):
             self.path = "<memory>"
             self._temp_decrypted_path = None
@@ -782,7 +832,7 @@ class Document:
             except Exception:
                 path_or_bytes = self._rebuild_with_pdfium_bytes(path_or_bytes)
                 self._core_doc = winnerz_core.Document(path_or_bytes)
-            
+
             self._pdfium_doc = pdfium.PdfDocument(path_or_bytes)
         else:
             self.original_path = path_or_bytes
@@ -795,7 +845,7 @@ class Document:
             except Exception as e:
                 self._rebuild_with_pdfium(self.path)
                 self._core_doc = winnerz_core.Document(self.path)
-            
+
             # Khởi tạo pypdfium_doc từ file path
             self._pdfium_doc = pdfium.PdfDocument(self.path)
 
@@ -805,11 +855,13 @@ class Document:
     def _rebuild_with_pdfium(self, path):
         import pypdfium2 as pdfium
         import uuid
+
         temp_dir = Path("temp_uploads").resolve()
         temp_dir.mkdir(exist_ok=True)
         self._temp_decrypted_path = str(temp_dir / f"decrypted_{uuid.uuid4().hex}.pdf")
-        
+
         import builtins
+
         f = builtins.open(path, "rb")
         src_doc = pdfium.PdfDocument(f)
         dst_doc = pdfium.PdfDocument.new()
@@ -823,10 +875,11 @@ class Document:
     def _rebuild_with_pdfium_bytes(self, raw_bytes):
         import pypdfium2 as pdfium
         import io
+
         src_doc = pdfium.PdfDocument(raw_bytes)
         dst_doc = pdfium.PdfDocument.new()
         dst_doc.import_pages(src_doc)
-        
+
         buf = io.BytesIO()
         dst_doc.save(buf)
         dst_doc.close()
@@ -871,6 +924,7 @@ class Document:
         with _silence_c_stderr():
             doc = self._get_pdfium_edit_doc()
             import io
+
             buf = io.BytesIO()
             doc.save(buf)
             return buf.getvalue()
@@ -878,6 +932,7 @@ class Document:
     def _get_pdfium_edit_doc(self):
         if not hasattr(self, "_pdfium_edit_doc") or self._pdfium_edit_doc is None:
             import pypdfium2 as pdfium
+
             if self.path == "<memory>":
                 self._pdfium_edit_doc = self._pdfium_doc
             else:
@@ -889,7 +944,7 @@ class Document:
         for i in range(self._page_count):
             if self._pages[i] is not None:
                 self._pages[i] = None
-                
+
         # Đóng tài liệu pdfium
         if hasattr(self, "_pdfium_doc") and self._pdfium_doc is not None:
             try:
@@ -897,11 +952,11 @@ class Document:
             except Exception:
                 pass
             self._pdfium_doc = None
-            
+
         # Giải phóng core
         if hasattr(self, "_core_doc"):
             self._core_doc = None
-            
+
         if hasattr(self, "_temp_decrypted_path") and self._temp_decrypted_path:
             try:
                 if os.path.exists(self._temp_decrypted_path):
@@ -915,6 +970,7 @@ class Document:
             self.close()
         except:
             pass
+
 
 def open(path_or_bytes):
     global _DOC_CACHE_PATH, _DOC_CACHE_SIZE, _DOC_CACHE_MTIME_NS, _DOC_CACHE_DOC
@@ -950,7 +1006,6 @@ def open(path_or_bytes):
             pass
 
     return doc
-
 
 
 try:

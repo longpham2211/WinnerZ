@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "puff.h"
+#include "miniz.h"
 #ifdef __cplusplus
 }
 #endif
@@ -43,12 +43,12 @@ static std::vector<uint8_t> try_puff(const std::vector<uint8_t>& src, size_t off
         unsigned long out_len = out_cap;
         unsigned long used_in = in_len;
 
-        const int res = puff(out.data(), &out_len, src.data() + offset, &used_in);
+        const int res = mz_uncompress(out.data(), &out_len, src.data() + offset, used_in);
         if (res == 0) {
             out.resize(out_len);
             return out;
         }
-        if (res != 1) {
+        if (res != MZ_BUF_ERROR) {
             break;
         }
 

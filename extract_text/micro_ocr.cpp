@@ -16,7 +16,30 @@
 #define POPCOUNT64 __builtin_popcountll
 #endif
 
+#include <unordered_map>
+#include <mutex>
+
 namespace WinExtract {
+
+// Thread-local Bitmap Hash Cache
+static thread_local std::unordered_map<uint64_t, std::vector<int>> t_ocr_hash_cache;
+
+inline uint64_t fnv1a_hash_ocr(const uint64_t blocks[16], int contours) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (int i = 0; i < 16; ++i) {
+        uint64_t val = blocks[i];
+        for (int b = 0; b < 8; ++b) {
+            hash ^= (val & 0xFF);
+            hash *= 1099511628211ULL;
+            val >>= 8;
+        }
+    }
+    hash ^= contours;
+    hash *= 1099511628211ULL;
+    return hash;
+}
+
+
 
 #ifdef WINEXTRACT_USE_FREETYPE
 
@@ -106,6 +129,11 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
     
     int target_contours = face->glyph->outline.n_contours;
     
+    // [TOFU FILTER]: Bypass rendering for non-text characters (spaces or complex icons)
+    if (target_contours == 0 || target_contours > 5) {
+        return {};
+    }
+    
     // Now render it as a mono bitmap for the pixel fallback
     if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_MONO) != 0) {
         return {};
@@ -134,6 +162,13 @@ std::vector<int> run_micro_ocr_on_glyph(FT_Face face, int glyph_id) {
         }
     }
     
+    // [BITMAP HASH CACHE]: Fast lookup before doing POPCNT
+    uint64_t hash = fnv1a_hash_ocr(rendered_blocks, target_contours);
+    auto cache_it = t_ocr_hash_cache.find(hash);
+    if (cache_it != t_ocr_hash_cache.end()) {
+        return cache_it->second;
+    }
+
     // Compare with templates
     std::string best_char_utf8 = "";
     float best_score = 0.0f;

@@ -461,7 +461,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     WinExtract::WinFontMatrixMap font_matrix_map = doc->get_page_font_matrix_map(page_index);
     WinExtract::WinFontVerticalMetricsMap font_vertical_metrics_map = doc->get_page_font_vertical_metrics_map(page_index);
     WinExtract::WinColorSpaceMap color_space_map = doc->get_page_color_space_map(page_index);
-    WinExtract::WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(page_index);
+    std::shared_ptr<const WinExtract::WinFormXObjectMap> form_xobject_map = doc->get_page_form_xobject_map(page_index);
     WinExtract::Rect mediabox = doc->get_page_mediabox(page_index);
 
     WinExtract::MuLogicExtractor dev;
@@ -1015,21 +1015,17 @@ PYBIND11_MODULE(winnerz_core, m) {
                  std::vector<std::thread> threads;
                  std::atomic<int> current_page{0};
 
-                 for (int t = 0; t < num_threads; ++t) {
-                     threads.emplace_back([&self, page_count, &page_results, &current_page]() {
-                         // Thread-local document instance (100% lock-free concurrency!)
-                         std::shared_ptr<WinExtract::WinPdfDocument> thread_doc;
-                         if (self.path == "<memory>") {
-                             thread_doc = WinExtract::WinPdfDocument::open_from_memory(self.mem_data);
-                         } else {
-                             thread_doc = WinExtract::WinPdfDocument::open(self.path);
-                         }
-                         if (!thread_doc) return;
+                 // SHARED Document for all threads. Xref is already parsed! Zero Disk IO!
+                 std::shared_ptr<WinExtract::WinPdfDocument> shared_doc = self.doc;
+
+                 int actual_threads = std::min(num_threads, page_count);
+                 for (int t = 0; t < actual_threads; ++t) {
+                     threads.emplace_back([shared_doc, page_count, &page_results, &current_page]() {
 
                          while (true) {
                              int i = current_page.fetch_add(1);
                              if (i >= page_count) break;
-                             page_results[i] = ExtractTextPlain(thread_doc, i, false);
+                             page_results[i] = ExtractTextPlain(shared_doc, i, false);
                          }
                      });
                  }

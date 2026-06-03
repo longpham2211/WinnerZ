@@ -102,7 +102,8 @@ static int mz_build_huffman(mz_huffman *h, const mz_uint8 *lengths, int n)
     }
 
     offs[0] = 0;
-    for (i = 1; i <= MZ_MAXBITS; ++i)
+    offs[1] = 0;
+    for (i = 2; i <= MZ_MAXBITS; ++i)
         offs[i] = (mz_uint16)(offs[i - 1] + h->count[i - 1]);
 
     for (i = 0; i < n; ++i)

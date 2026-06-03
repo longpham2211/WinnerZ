@@ -3968,7 +3968,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                            const WinFontMatrixMap& font_matrix_map,
                            const WinFontVerticalMetricsMap& font_vertical_metrics_map,
                            const WinColorSpaceMap& color_space_map,
-                           const WinFormXObjectMap& form_xobject_map,
+                           std::shared_ptr<const WinFormXObjectMap> form_xobject_map,
                            const float* initial_ctm,
                            int recursion_depth,
                            const Rect* page_mediabox,
@@ -5186,13 +5186,13 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                    op == "B" || op == "B*" || op == "b" || op == "b*" || op == "n") {
             consume_current_path();
         } else if (op == "Do") {
-            if (!operands.empty() && operands.back().type == PdfToken::Type::Name) {
+            if (!operands.empty() && operands.back().type == PdfToken::Type::Name && form_xobject_map) {
                 const std::string& xobj_name = operands.back().name;
-                auto fit = form_xobject_map.find(xobj_name);
-                if (fit != form_xobject_map.end() && !fit->second.stream.empty()) {
+                auto fit = form_xobject_map->find(xobj_name);
+                if (fit != form_xobject_map->end() && fit->second.stream_ptr && !fit->second.stream_ptr->empty()) {
                     float form_ctm[6];
                     matrix_multiply(fit->second.matrix.data(), ctm, form_ctm);
-                    WinPdfInterpreter::run(fit->second.stream,
+                    WinPdfInterpreter::run(*(fit->second.stream_ptr),
                                            extractor,
                                            fit->second.font_unicode_map,
                                            fit->second.font_width_map,
@@ -5201,7 +5201,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                                            fit->second.font_matrix_map,
                                            fit->second.font_vertical_metrics_map,
                                            fit->second.color_space_map,
-                                           fit->second.children ? *fit->second.children : WinFormXObjectMap(),
+                                           fit->second.children,
                                            form_ctm,
                                            recursion_depth + 1,
                                            page_mediabox,
@@ -7759,11 +7759,18 @@ WinColorSpaceMap WinPdfDocument::get_page_color_space_map(int page_idx) {
     return out;
 }
 
-WinFormXObjectMap WinPdfDocument::get_page_form_xobject_map(int page_idx) {
+std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_map(int page_idx) {
     std::lock_guard<std::recursive_mutex> lock(cache_mutex);
-    WinFormXObjectMap out;
+    if (cached_page_xobject_maps.count(page_idx)) {
+        return cached_page_xobject_maps[page_idx];
+    }
+    
+    auto out_ptr = std::make_shared<WinFormXObjectMap>();
+    WinFormXObjectMap& out = *out_ptr;
+    
     if (page_idx < 0 || page_idx >= static_cast<int>(page_ids.size()) || page_ids.empty()) {
-        return out;
+        cached_page_xobject_maps[page_idx] = out_ptr;
+        return out_ptr;
     }
 
     std::string page_resources_dict;
@@ -7791,7 +7798,14 @@ WinFormXObjectMap WinPdfDocument::get_page_form_xobject_map(int page_idx) {
     }
 
     if (page_resources_dict.empty()) {
-        return out;
+        cached_page_xobject_maps[page_idx] = out_ptr;
+        return out_ptr;
+    }
+
+    if (cached_resource_xobject_maps.count(page_resources_dict)) {
+        auto ptr = cached_resource_xobject_maps[page_resources_dict];
+        cached_page_xobject_maps[page_idx] = ptr;
+        return ptr;
     }
 
     const WinFontUnicodeMap page_unicode_map = get_page_font_unicode_map(page_idx);
@@ -8597,7 +8611,7 @@ WinFormXObjectMap WinPdfDocument::get_page_form_xobject_map(int page_idx) {
                 continue;
             }
 
-            std::shared_ptr<std::vector<uint8_t>> decoded_ptr;
+            std::shared_ptr<const std::vector<uint8_t>> decoded_ptr;
             if (cached_decoded_streams.count(xobj_id)) {
                 decoded_ptr = cached_decoded_streams[xobj_id];
             } else {
@@ -8605,7 +8619,7 @@ WinFormXObjectMap WinPdfDocument::get_page_form_xobject_map(int page_idx) {
                 if (decoded.empty()) {
                     decoded = xobj.stream;
                 }
-                decoded_ptr = std::make_shared<std::vector<uint8_t>>(std::move(decoded));
+                decoded_ptr = std::make_shared<const std::vector<uint8_t>>(std::move(decoded));
                 cached_decoded_streams[xobj_id] = decoded_ptr;
             }
 
@@ -8614,7 +8628,7 @@ WinFormXObjectMap WinPdfDocument::get_page_form_xobject_map(int page_idx) {
             }
 
             WinFormXObject form;
-            form.stream = *decoded_ptr;
+            form.stream_ptr = decoded_ptr;
             form.font_unicode_map = inherited_unicode;
             form.font_width_map = inherited_width;
             form.font_code_bytes_map = inherited_code_bytes;
@@ -8678,7 +8692,9 @@ WinFormXObjectMap WinPdfDocument::get_page_form_xobject_map(int page_idx) {
                       page_vertical_metrics_map,
                       page_color_space_map,
                       recursion_guard);
-    return out;
+    cached_resource_xobject_maps[page_resources_dict] = out_ptr;
+    cached_page_xobject_maps[page_idx] = out_ptr;
+    return out_ptr;
 }
 
 WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
@@ -9514,10 +9530,12 @@ void WinPdfDocument::clear_page_cache() {
 }
 
 WinPdfObject WinPdfDocument::read_obj(int id) {
-    std::lock_guard<std::recursive_mutex> lock(cache_mutex);
-    auto cached = object_cache.find(id);
-    if (cached != object_cache.end()) {
-        return cached->second;
+    {
+        std::lock_guard<std::recursive_mutex> lock(cache_mutex);
+        auto cached = object_cache.find(id);
+        if (cached != object_cache.end()) {
+            return cached->second;
+        }
     }
 
     WinPdfObject obj;
@@ -9527,6 +9545,7 @@ WinPdfObject WinPdfDocument::read_obj(int id) {
     if (it != xref.end()) {
         obj = read_obj_from_offset(id, it->second);
         if (object_has_payload(obj)) {
+            std::lock_guard<std::recursive_mutex> lock(cache_mutex);
             object_cache[id] = obj;
             return obj;
         }
@@ -9534,6 +9553,7 @@ WinPdfObject WinPdfDocument::read_obj(int id) {
 
     obj = read_obj_from_objstm(id);
     if (object_has_payload(obj)) {
+        std::lock_guard<std::recursive_mutex> lock(cache_mutex);
         object_cache[id] = obj;
     }
     return obj;
@@ -9677,6 +9697,8 @@ void WinPdfDocument::build_objstm_index() {
 }
 
 void WinPdfDocument::load_objstm(int container_id) {
+    std::lock_guard<std::recursive_mutex> lock(objstm_mutex);
+
     if (objstm_infos.find(container_id) != objstm_infos.end()) {
         return;
     }

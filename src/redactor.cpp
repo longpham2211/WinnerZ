@@ -1015,7 +1015,7 @@ static std::string run_filter(
     const WinExtract::WinFontCodeSpaceMap& codespace_map,
     const WinExtract::WinFontMatrixMap& matrix_map,
     const WinExtract::WinFontVerticalMetricsMap& vm,
-    const WinExtract::WinFormXObjectMap& xobj_map,
+    std::shared_ptr<const WinExtract::WinFormXObjectMap> xobj_map,
     int recursion_depth = 0);
 
 
@@ -1034,7 +1034,7 @@ static std::string run_filter(
     const WinExtract::WinFontCodeSpaceMap& codespace_map,
         const WinExtract::WinFontMatrixMap& matrix_map,
         const WinExtract::WinFontVerticalMetricsMap& vm,
-        const WinExtract::WinFormXObjectMap& xobj_map,
+        std::shared_ptr<const WinExtract::WinFormXObjectMap> xobj_map,
         int recursion_depth) {
 
     WinRedactWriter out;
@@ -1462,8 +1462,8 @@ static std::string run_filter(
                 xobj_name = operands.back().name_str;
 
             // Tìm trong xobj_map (Form XObjects của trang này)
-            auto xobj_it = xobj_map.find(xobj_name);
-            if (xobj_it != xobj_map.end() && !xobj_it->second.stream.empty()
+            auto xobj_it = xobj_map->find(xobj_name);
+            if (xobj_it != xobj_map->end() && xobj_it->second.stream_ptr && !xobj_it->second.stream_ptr->empty()
                 && recursion_depth < 8)  // Clone Fitz cycle detection (max depth 8)
             {
                 const WinExtract::WinFormXObject& xobj = xobj_it->second;
@@ -1499,17 +1499,20 @@ static std::string run_filter(
                     merged_vm.insert_or_assign(kv.first, kv.second);
 
                 // Merge child XObjects (XObjects lồng nhau)
-                WinExtract::WinFormXObjectMap merged_xobjs = xobj_map;
-                if (!xobj.children) continue;
-                for (const auto& kv : *xobj.children)
-                    merged_xobjs.insert_or_assign(kv.first, kv.second);
+                WinExtract::WinFormXObjectMap merged_xobjs = xobj_map ? *xobj_map : WinExtract::WinFormXObjectMap();
+                if (xobj.children) {
+                    for (const auto& kv : *xobj.children)
+                        merged_xobjs.insert_or_assign(kv.first, kv.second);
+                }
+
+                if (!xobj.stream_ptr) continue;
 
                 // Đệ quy: lọc nội dung của XObject với baked_ctm
                 std::string inner = run_filter(
-                    xobj.stream, baked_ctm, zones,
+                    *xobj.stream_ptr, baked_ctm, zones,
                     merged_width, merged_codebytes, merged_codespace,
                     merged_matrix, merged_vm,
-                    merged_xobjs, recursion_depth + 1);
+                    std::make_shared<const WinExtract::WinFormXObjectMap>(merged_xobjs), recursion_depth + 1);
 
                 if (!inner.empty()) {
                     // Inline kết quả: q [xobj_matrix] cm [bbox] re W n <filtered_content> Q

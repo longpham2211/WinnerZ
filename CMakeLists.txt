@@ -37,7 +37,7 @@ add_library(WinnerZ STATIC
     extract_text/bidi.cpp
     extract_text/bidi_std.cpp
     extract_text/ucdn.cpp
-    extract_text/puff.c
+    extract_text/miniz.c
     extract_text/micro_ocr.cpp
 )
 set_target_properties(WinnerZ PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -147,3 +147,4 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     install(FILES winnerz/__init__.py DESTINATION winnerz)
     install(FILES winnerz/winnerz_core.pyi DESTINATION winnerz)
 endif()
+
