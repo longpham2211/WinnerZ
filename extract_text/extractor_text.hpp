@@ -20,7 +20,6 @@ struct extract_text {
     int object_id;
 };
 
-// Interface bóc tách cấu trúc (Rep 1:1 Fitz)
 WinPage extract_structured_text(std::string pdf_path);
 
 // Interface bóc tách danh sách phẳng (Old style)

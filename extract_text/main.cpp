@@ -8,10 +8,6 @@
 #include <windows.h>
 #endif
 
-// DỰ ÁN WINNERZ: 100% STANDALONE PDF ENGINE
-// Copy hoàn toàn Pipeline của MuPDF Fitz sang C++ thuần túy
-// Không dùng mupdf/fitz.h, không dùng fpdfview.h
-
 using namespace WinExtract;
 
 void process_winnerz_engine(const std::string& path) {
@@ -24,7 +20,7 @@ void process_winnerz_engine(const std::string& path) {
 
     int page_count = doc->count_pages();
     std::cout << "--- WINNERZ PROJECT: STANDALONE ENGINE CLONE ---" << std::endl;
-    std::cout << "Fitz Pipeline: Document -> Page -> Interpreter -> Device (SText)" << std::endl;
+    std::cout << "Pipeline: Document -> Page -> Interpreter -> Device (SText)" << std::endl;
     std::cout << "Input PDF: " << path << std::endl;
     std::cout << "Detected pages/streams: " << page_count << std::endl;
 
@@ -44,7 +40,7 @@ void process_winnerz_engine(const std::string& path) {
         WinFontVerticalMetricsMap font_vertical_metrics_map = doc->get_page_font_vertical_metrics_map(i);
         WinColorSpaceMap color_space_map = doc->get_page_color_space_map(i);
         WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(i);
-        Rect              mediabox         = doc->get_page_mediabox(i);
+        Rect              mediabox         = doc->get_page_geometry(i).mediabox;
 
         MuLogicExtractor dev;
         dev.begin_page(mediabox.x1 - mediabox.x0, mediabox.y1 - mediabox.y0);
@@ -73,8 +69,6 @@ void process_winnerz_engine(const std::string& path) {
         }
 
         WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-
-        // KẾT QUẢ ĐÃ ĐƯỢC NHÓM LẠI THEO HỆ THỐNG PHÂN CẤP (Fitz SText)
         WinPage structured_page = dev.finish_page();
         std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;
         MuLogicExtractor::print_to_terminal(structured_page);

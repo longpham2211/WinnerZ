@@ -193,7 +193,7 @@ static bool parse_int_token_strict(const std::string &tok, int &out) {
     }
 
     char *end_ptr = nullptr;
-    long v = wz_strtol_fitz(tok.c_str(), &end_ptr, 10);
+    long v = wz_strtol(tok.c_str(), &end_ptr, 10);
     if (end_ptr == tok.c_str() || *end_ptr != '\0') {
         return false;
     }
@@ -284,7 +284,7 @@ static std::vector<std::string> tokenize_cmap_stream(const std::string &text) {
 
 } // namespace
 
-std::unordered_map<int, std::vector<int>> parse_tounicode_cmap_fitz(const std::vector<uint8_t> &bytes) {
+std::unordered_map<int, std::vector<int>> parse_tounicode_cmap(const std::vector<uint8_t> &bytes) {
     std::unordered_map<int, std::vector<int>> mapping;
 
     // A valid ToUnicode CMap is ASCII text (PostScript).
@@ -308,8 +308,7 @@ std::unordered_map<int, std::vector<int>> parse_tounicode_cmap_fitz(const std::v
     const std::string text(reinterpret_cast<const char *>(bytes.data()), bytes.size());
     const std::vector<std::string> toks = tokenize_cmap_stream(text);
 
-    // Fitz embedded CMaps honor /UseCMap. Seed mapping from named base CMap first,
-    // then let explicit bfchar/bfrange entries override.
+
     for (size_t i = 1; i < toks.size(); ++i) {
         if (toks[i] != "usecmap") {
             continue;
@@ -323,7 +322,7 @@ std::unordered_map<int, std::vector<int>> parse_tounicode_cmap_fitz(const std::v
             continue;
         }
 
-        const auto &base = load_system_unicode_cmap_by_name_fitz(name);
+        const auto &base = load_system_unicode_cmap_by_name(name);
         if (!base.empty()) {
             mapping = base;
         }

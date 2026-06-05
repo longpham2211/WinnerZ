@@ -21,7 +21,6 @@ std::vector<extract_text> extract_all_chars(std::string pdf_path) {
     for (auto& block : page.blocks) {
         if (block.type != WinExtract::BlockType::TEXT) continue;
         for (auto& line : block.lines) {
-            // PIPELINE 1:1 FITZ: Phải duyệt qua Span trước khi tới Char
             for (auto& span : line.spans) {
                 for (auto& ch : span.chars) {
                     extract_text et;

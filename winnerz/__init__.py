@@ -586,7 +586,7 @@ class Page:
                 self.doc._core_doc.get_blocks, self.index, sort
             )
         if mode == "text":
-            if hasattr(self.doc._core_doc, "extract_text_plain"):
+            if hasattr(self.doc._core_doc, "get_text_plain"):
                 return _call_text_json_compat(
                     self.doc._core_doc.get_text_plain, self.index, sort
                 )
@@ -679,7 +679,7 @@ class Page:
                     [float(r[0]), float(r[1]), float(r[2]), float(r[3])]
                 )
 
-        return self.doc._core_doc.redact_text_rects(
+        return self.doc._core_doc.redact_rects(
             output_path,
             self.index,
             serializable_rects,
@@ -730,14 +730,17 @@ class Page:
             h = y1 - y0
             rot = pdf_page.get_rotation()
 
+            cropbox = pdf_page.get_cropbox()
+            cb_left, cb_bottom = float(cropbox[0]), float(cropbox[1])
+
             if rot == 0:
-                m_args = (w, 0, 0, h, x0, page_h - y1)
+                m_args = (w, 0, 0, h, x0 + cb_left, page_h - y1 + cb_bottom)
             elif rot == 90:
-                m_args = (0, w, -h, 0, y1, x0)
+                m_args = (0, w, -h, 0, y1 + cb_left, x0 + cb_bottom)
             elif rot == 180:
-                m_args = (-w, 0, 0, -h, page_w - x0, y1)
+                m_args = (-w, 0, 0, -h, page_w - x0 + cb_left, y1 + cb_bottom)
             else:  # rot == 270
-                m_args = (0, -w, h, 0, page_h - y1, page_w - x0)
+                m_args = (0, -w, h, 0, page_h - y1 + cb_left, page_w - x0 + cb_bottom)
 
             try:
                 matrix = pdfium.PdfMatrix(*m_args)
@@ -793,14 +796,17 @@ class Page:
             page_h = pdf_page.get_height()
             rot = pdf_page.get_rotation()
 
+            cropbox = pdf_page.get_cropbox()
+            cb_left, cb_bottom = float(cropbox[0]), float(cropbox[1])
+
             if rot == 0:
-                a, b, c, d, e, f = w, 0, 0, h, dx, page_h - dy - h
+                a, b, c, d, e, f = w, 0, 0, h, dx + cb_left, page_h - dy - h + cb_bottom
             elif rot == 90:
-                a, b, c, d, e, f = 0, w, -h, 0, dy + h, dx
+                a, b, c, d, e, f = 0, w, -h, 0, dy + h + cb_left, dx + cb_bottom
             elif rot == 180:
-                a, b, c, d, e, f = -w, 0, 0, -h, page_w - dx, dy + h
+                a, b, c, d, e, f = -w, 0, 0, -h, page_w - dx + cb_left, dy + h + cb_bottom
             else:  # rot == 270
-                a, b, c, d, e, f = 0, -w, h, 0, page_h - dy - h, page_w - dx
+                a, b, c, d, e, f = 0, -w, h, 0, page_h - dy - h + cb_left, page_w - dx + cb_bottom
 
             a /= float(src_w)
             b /= float(src_w)

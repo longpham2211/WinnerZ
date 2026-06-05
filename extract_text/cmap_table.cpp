@@ -210,7 +210,7 @@ static std::unordered_map<int, std::vector<int>> build_unicode_map_from_cmap(con
 
 } // namespace
 
-const std::unordered_map<int, std::vector<int>>& load_system_unicode_cmap_by_name_fitz(const std::string& cmap_name) {
+const std::unordered_map<int, std::vector<int>>& load_system_unicode_cmap_by_name(const std::string& cmap_name) {
 	static const std::unordered_map<int, std::vector<int>> empty;
 	static std::unordered_map<std::string, std::unordered_map<int, std::vector<int>>> cache;
 
@@ -228,18 +228,18 @@ const std::unordered_map<int, std::vector<int>>& load_system_unicode_cmap_by_nam
 	return inserted.first->second;
 }
 
-const std::unordered_map<int, std::vector<int>>& load_collection_unicode_cmap_fitz(const std::string& collection) {
+const std::unordered_map<int, std::vector<int>>& load_collection_unicode_cmap(const std::string& collection) {
 	if (collection == "Adobe-CNS1") {
-		return load_system_unicode_cmap_by_name_fitz("Adobe-CNS1-UCS2");
+		return load_system_unicode_cmap_by_name("Adobe-CNS1-UCS2");
 	}
 	if (collection == "Adobe-GB1") {
-		return load_system_unicode_cmap_by_name_fitz("Adobe-GB1-UCS2");
+		return load_system_unicode_cmap_by_name("Adobe-GB1-UCS2");
 	}
 	if (collection == "Adobe-Japan1" || collection == "Adobe-Japan2") {
-		return load_system_unicode_cmap_by_name_fitz("Adobe-Japan1-UCS2");
+		return load_system_unicode_cmap_by_name("Adobe-Japan1-UCS2");
 	}
 	if (collection == "Adobe-Korea1") {
-		return load_system_unicode_cmap_by_name_fitz("Adobe-Korea1-UCS2");
+		return load_system_unicode_cmap_by_name("Adobe-Korea1-UCS2");
 	}
 
 	static const std::unordered_map<int, std::vector<int>> empty;

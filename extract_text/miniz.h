@@ -8,7 +8,6 @@
 extern "C" {
 #endif
 
-// --- CHUẨN ZLIB COMPATIBLE (Fitz style) ---
 typedef unsigned char mz_uint8;
 typedef unsigned short mz_uint16;
 typedef unsigned int mz_uint32;

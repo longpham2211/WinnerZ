@@ -6,15 +6,15 @@
 
 namespace WinExtract {
 
-bool wz_parse_xref_line_fitz(const char* p, long& offset, int& gen, char& type) {
+bool wz_parse_xref_line(const char* p, long& offset, int& gen, char& type) {
     char* e1;
-    long v1 = wz_strtol_fitz(p, &e1, 10);
+    long v1 = wz_strtol(p, &e1, 10);
     if (e1 == p || v1 < 0) {
         return false;
     }
 
     char* e2;
-    long v2 = wz_strtol_fitz(e1, &e2, 10);
+    long v2 = wz_strtol(e1, &e2, 10);
     if (e2 == e1 || v2 < 0) {
         return false;
     }
@@ -31,17 +31,17 @@ bool wz_parse_xref_line_fitz(const char* p, long& offset, int& gen, char& type) 
     return false;
 }
 
-bool wz_parse_xref_line_3_fitz(const char* p, int& id, int& gen, char& r, int& consumed) {
+bool wz_parse_xref_line_3(const char* p, int& id, int& gen, char& r, int& consumed) {
     const char* start = p;
 
     char* e1;
-    long v1 = wz_strtol_fitz(p, &e1, 10);
+    long v1 = wz_strtol(p, &e1, 10);
     if (e1 == p) {
         return false;
     }
 
     char* e2;
-    long v2 = wz_strtol_fitz(e1, &e2, 10);
+    long v2 = wz_strtol(e1, &e2, 10);
     if (e2 == e1) {
         return false;
     }

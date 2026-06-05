@@ -1574,6 +1574,19 @@ static Rect convert_topdown_to_pdf(const Rect& top_down, const Rect& mediabox) {
     };
 }
 
+static bool fz_invert_matrix(float inv[6], const float m[6]) {
+    float det = m[0] * m[3] - m[1] * m[2];
+    if (det == 0.0f) return false;
+    float rdet = 1.0f / det;
+    inv[0] = m[3] * rdet;
+    inv[1] = -m[1] * rdet;
+    inv[2] = -m[2] * rdet;
+    inv[3] = m[0] * rdet;
+    inv[4] = (m[2] * m[5] - m[3] * m[4]) * rdet;
+    inv[5] = (m[1] * m[4] - m[0] * m[5]) * rdet;
+    return true;
+}
+
 // ─── Hàm public chính ────────────────────────────────────────────────────────
 
 // Redact text trong một trang, trả về content stream đã lọc dưới dạng bytes.
@@ -1591,13 +1604,24 @@ std::vector<uint8_t> WinnerZ_RedactPage(
         const float page_ctm[6]) {
 
     // Lấy page geometry
-    WinExtract::Rect mediabox = doc.get_page_mediabox(page_idx);
+    WinExtract::Rect mediabox = doc.get_page_geometry(page_idx).mediabox;
+    
+    bool has_inv = false;
+    float inv[6];
+    if (page_ctm) {
+        has_inv = fz_invert_matrix(inv, page_ctm);
+    }
+    
     // Chuyển đổi tọa độ (top-down → PDF)
     std::vector<WinRedactZone> pdf_zones;
     pdf_zones.reserve(zones_topdown.size());
     for (const auto& z : zones_topdown) {
         WinRedactZone pz;
-        pz.rect = convert_topdown_to_pdf(z.rect, mediabox);
+        if (has_inv) {
+            pz.rect = transform_rect_by_matrix(z.rect, inv);
+        } else {
+            pz.rect = convert_topdown_to_pdf(z.rect, mediabox);
+        }
         pdf_zones.push_back(pz);
     }
 
@@ -1616,13 +1640,12 @@ std::vector<uint8_t> WinnerZ_RedactPage(
     // tương đương pdf_filter_Do_form với instance_forms=1
     auto xobj_map = doc.get_page_form_xobject_map(page_idx);
 
-    // Identity CTM nếu caller không truyền
+    // Identity CTM
     float default_ctm[6] = {1,0,0,1,0,0};
-    const float* ctm = page_ctm ? page_ctm : default_ctm;
 
     // ── Chạy filter (clone pdf_filter_content_stream + pdf_filter_Do_form) ──
     std::string filtered = run_filter(
-        raw_stream, ctm, pdf_zones,
+        raw_stream, default_ctm, pdf_zones,
         width_map, code_bytes_map, codespace_map, matrix_map, vm_map,
         xobj_map, /*recursion_depth=*/0);
 

@@ -4,6 +4,6 @@
 
 namespace WinExtract {
 
-int glyph_name_to_unicode_fitz(std::string name);
+int glyph_name_to_unicode(std::string name);
 
 } // namespace WinExtract

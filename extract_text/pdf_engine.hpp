@@ -126,8 +126,6 @@ struct WinFormXObject {
 
 using WinFormXObjectMap = std::unordered_map<std::string, WinFormXObject>;
 
-// CẤU TRÚC "FITZ PIPELINE" CLONE
-// Document -> Page -> Interpreter -> Device (MuLogic)
 
 struct WinPdfObject {
     int id;
@@ -138,7 +136,12 @@ struct WinPdfObject {
     bool is_stream = false;
 };
 
-// 1. Phân tích cú pháp File (Xref/Trailer)
+struct WinPageGeometry {
+    Rect mediabox = {0, 0, 595, 842};
+    Rect cropbox = {0, 0, 595, 842};
+    int rotate = 0;
+};
+
 class WinPdfDocument {
 public:
     static std::shared_ptr<WinPdfDocument> open(const std::string& path);
@@ -154,7 +157,7 @@ public:
     WinFontVerticalMetricsMap get_page_font_vertical_metrics_map(int page_idx);
     WinColorSpaceMap get_page_color_space_map(int page_idx);
     std::shared_ptr<const WinFormXObjectMap> get_page_form_xobject_map(int page_idx);
-    Rect              get_page_mediabox(int page_idx);
+    WinPageGeometry   get_page_geometry(int page_idx);
     // Save a new PDF by replacing a page's /Contents with a new decoded stream.
     // The output is written as an incremental update to preserve original objects.
     bool save_page_content_incremental(int page_idx,
@@ -166,7 +169,6 @@ public:
         const std::map<int, std::vector<uint8_t>>& pages_streams,
         const std::string& output_path);
     
-    // Giải phóng bộ nhớ cache (page-based flush) để tránh OOM
     void clear_page_cache();
 
     std::map<std::string, int> get_page_font_name_to_id(int page_idx);
@@ -184,7 +186,6 @@ public:
     void fill_missing_unicode_from_freetype(const WinPdfObject& font_obj, std::unordered_map<int, std::vector<int>>& unicode_map, const std::map<int, std::string>& diff_names);
 
     
-    // Tìm object bằng ID
     WinPdfObject read_obj(int id);
     
 private:
@@ -199,14 +200,9 @@ private:
         std::vector<uint8_t> decoded;
     };
 
-    // ── Zero-copy file storage ─────────────────────────────────────────────────
-    // Đường đi bình thường (mmap): file_view_ trỏ thẳng vào bộ nhớ OS-mapped.
-    //   → RAM vật lý chỉ load đúng page đang truy cập. File 1 GB đợc xử lý
-    //     mà không bao giờ có 1 GB nào trong heap.
-    // Đường dự phòng (mmap thất bại): data_ lưu file, file_view_ trỏ vào data_.
     MappedFile mapped_file_;
-    std::string_view file_view_;   // luôn hợp lệ sau open()
-    std::vector<uint8_t> data_;    // chỉ khác rỗng khi mmap thất bại (fallback)
+    std::string_view file_view_;  
+    std::vector<uint8_t> data_;    
 
     std::map<int, size_t> xref; // ID -> Offset
     int root_id = 0;
@@ -250,10 +246,8 @@ private:
     static bool has_flate_filter(const std::string& dict);
 };
 
-// 2. Thông dịch Content Stream (Clone Fitz Interpreter)
 class WinPdfInterpreter {
 public:
-    // Nhận Content Stream và Một Device (MuLogicExtractor)
     static void run(const std::vector<uint8_t>& stream, MuLogicExtractor& dev,
                    const WinFontUnicodeMap& font_unicode_map = {},
                    const WinFontWidthMap&   font_width_map   = {},
@@ -274,12 +268,10 @@ public:
                    const int* inherited_text_render_mode = nullptr);
 
 private:
-    // State machine cho Matrix (1:1 Fitz)
     struct State {
         float ctm[6];
         float trm[6];
         float font_size;
-        // ...
     };
 };
 

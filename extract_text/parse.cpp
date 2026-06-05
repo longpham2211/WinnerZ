@@ -4,7 +4,7 @@
 
 namespace WinExtract {
 
-long wz_strtol_fitz(const char* nptr, char** endptr, int base) {
+long wz_strtol(const char* nptr, char** endptr, int base) {
     long result = 0;
     int sign = 1;
     const char* p = nptr;
@@ -37,15 +37,15 @@ long wz_strtol_fitz(const char* nptr, char** endptr, int base) {
     return result * sign;
 }
 
-bool wz_parse_obj_ref_fitz(const char* p, int& id, int& gen) {
+bool wz_parse_obj_ref(const char* p, int& id, int& gen) {
     char* e1;
-    long v1 = wz_strtol_fitz(p, &e1, 10);
+    long v1 = wz_strtol(p, &e1, 10);
     if (e1 == p || v1 <= 0) {
         return false;
     }
 
     char* e2;
-    long v2 = wz_strtol_fitz(e1, &e2, 10);
+    long v2 = wz_strtol(e1, &e2, 10);
     if (e2 == e1 || v2 < 0) {
         return false;
     }
@@ -61,15 +61,15 @@ bool wz_parse_obj_ref_fitz(const char* p, int& id, int& gen) {
     return false;
 }
 
-bool wz_parse_obj_header_fitz(const char* p, int& id, int& gen) {
+bool wz_parse_obj_header(const char* p, int& id, int& gen) {
     char* e1;
-    long v1 = wz_strtol_fitz(p, &e1, 10);
+    long v1 = wz_strtol(p, &e1, 10);
     if (e1 == p || v1 <= 0) {
         return false;
     }
 
     char* e2;
-    long v2 = wz_strtol_fitz(e1, &e2, 10);
+    long v2 = wz_strtol(e1, &e2, 10);
     if (e2 == e1 || v2 < 0) {
         return false;
     }

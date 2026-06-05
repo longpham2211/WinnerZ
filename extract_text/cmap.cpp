@@ -67,7 +67,7 @@ static bool parse_int_token_strict(const std::string& tok, int& out) {
     }
 
     char* end_ptr = nullptr;
-    long v = wz_strtol_fitz(tok.c_str(), &end_ptr, 10);
+    long v = wz_strtol(tok.c_str(), &end_ptr, 10);
     if (end_ptr == tok.c_str() || *end_ptr != '\0') {
         return false;
     }
@@ -141,7 +141,7 @@ static std::vector<std::string> tokenize_cmap_stream(const std::string& text) {
 
 } // namespace
 
-std::vector<WinCodeSpaceRange> parse_cmap_codespace_ranges_fitz(const std::vector<uint8_t>& bytes) {
+std::vector<WinCodeSpaceRange> parse_cmap_codespace_ranges(const std::vector<uint8_t>& bytes) {
     std::vector<WinCodeSpaceRange> ranges;
     const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     const std::vector<std::string> toks = tokenize_cmap_stream(text);

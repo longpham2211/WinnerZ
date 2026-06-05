@@ -249,6 +249,8 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         space_char.is_mono = mono;
         space_char.font_name = font_name;
         space_char.is_synthetic = true;
+        space_char.ascender = ascender;
+        space_char.descender = descender;
 
         // Tính toán độ dốc (ascender/descender)
         Vec2 sa = {0, ascender};
@@ -269,7 +271,12 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     WinChar wc;
     wc.c = c; wc.bidi = bidi; wc.origin = p; wc.size = m_size;
     wc.color = color; wc.is_bold = bold; wc.is_italic = italic;
-    wc.is_serif = serif; wc.is_mono = mono; wc.font_name = font_name;
+    wc.is_serif = serif;
+    wc.is_mono = mono;
+    wc.font_name = font_name;
+    wc.is_synthetic = is_synthetic_space;
+    wc.ascender = ascender;
+    wc.descender = descender;
 
     Vec2 a = {0, ascender};
     Vec2 d = {0, descender}; 

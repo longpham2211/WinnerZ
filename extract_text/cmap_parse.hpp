@@ -7,6 +7,6 @@
 
 namespace WinExtract {
 
-std::unordered_map<int, std::vector<int>> parse_tounicode_cmap_fitz(const std::vector<uint8_t>& bytes);
+std::unordered_map<int, std::vector<int>> parse_tounicode_cmap(const std::vector<uint8_t>& bytes);
 
 } // namespace WinExtract

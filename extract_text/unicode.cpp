@@ -30,7 +30,7 @@ static int parse_hex_codepoint(const std::string& s) {
 
 } // namespace
 
-int glyph_name_to_unicode_fitz(std::string name) {
+int glyph_name_to_unicode(std::string name) {
     if (name.empty()) {
         return 0;
     }

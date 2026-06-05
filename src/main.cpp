@@ -43,7 +43,7 @@ void process_winnerz_engine(const std::string& path) {
         WinFontVerticalMetricsMap font_vertical_metrics_map = doc->get_page_font_vertical_metrics_map(i);
         WinColorSpaceMap color_space_map = doc->get_page_color_space_map(i);
         WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(i);
-        Rect              mediabox         = doc->get_page_mediabox(i);
+        Rect              mediabox         = doc->get_page_geometry(i).mediabox;
 
         MuLogicExtractor dev;
         dev.begin_page(mediabox.x1 - mediabox.x0, mediabox.y1 - mediabox.y0);

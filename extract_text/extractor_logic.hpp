@@ -22,6 +22,8 @@ struct WinChar {
     bool is_serif;
     bool is_mono;
     std::string font_name;
+    float ascender = 0.8f;
+    float descender = -0.2f;
     
     // Thêm cờ gạch chân/gạch ngang nếu cần thiết sau này
     bool is_underlined = false;

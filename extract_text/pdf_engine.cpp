@@ -141,6 +141,9 @@ static bool wz_parse_xref_line_3(const char* p, int& id, int& gen, char& r, int&
 #ifdef WINEXTRACT_USE_FREETYPE
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_ADVANCES_H
+#include FT_OUTLINE_H
+#include FT_BBOX_H
 #endif
 
 namespace WinExtract {
@@ -198,15 +201,14 @@ struct WinIccDeviceConverter {
         };
 
         rgb_profile = open_profile({
-            "/usr/share/color/icc/ghostscript/default_rgb.icc",
-            "/usr/share/color/icc/default_rgb.icc"
+            "/usr/share/color/icc/default_rgb.icc",
+            "/usr/share/color/icc/sRGB.icc"
         });
         cmyk_profile = open_profile({
-            "/usr/share/color/icc/ghostscript/default_cmyk.icc",
-            "/usr/share/color/icc/default_cmyk.icc"
+            "/usr/share/color/icc/default_cmyk.icc",
+            "/usr/share/color/icc/RSWOP.icc"
         });
         lab_profile = open_profile({
-            "/usr/share/color/icc/ghostscript/lab.icc",
             "/usr/share/color/icc/lab.icc"
         });
 
@@ -516,7 +518,7 @@ static std::vector<std::string> get_system_font_candidates(const std::string& ra
             "../../../../../"
         };
         for (const std::string& prefix : prefixes) {
-            candidates.push_back(prefix + "pymupdf/mupdf-master/resources/fonts/urw/" + file_name);
+            candidates.push_back(prefix + "resources/fonts/urw/" + std::string(file_name));
         }
     };
 
@@ -1842,7 +1844,7 @@ static std::map<std::string, int> parse_font_refs_from_dict(const std::string& f
 
         int id = 0;
         int gen = 0;
-        if (pos < font_dict.size() && wz_parse_obj_ref_fitz(font_dict.c_str() + pos, id, gen) && id > 0) {
+        if (pos < font_dict.size() && wz_parse_obj_ref(font_dict.c_str() + pos, id, gen) && id > 0) {
             refs[name] = id;
         }
     }
@@ -2060,7 +2062,7 @@ static std::vector<std::string> tokenize_cmap_stream(const std::string& text) {
     return toks;
 }
 
-static std::unordered_map<int, std::vector<int>> parse_tounicode_cmap(const std::vector<uint8_t>& bytes) {
+static std::unordered_map<int, std::vector<int>> parse_tounicode_cmap_internal(const std::vector<uint8_t>& bytes) {
     std::unordered_map<int, std::vector<int>> mapping;
     const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     const std::vector<std::string> toks = tokenize_cmap_stream(text);
@@ -2168,7 +2170,7 @@ static std::unordered_map<int, std::vector<int>> parse_tounicode_cmap(const std:
     return mapping;
 }
 
-static std::vector<WinCodeSpaceRange> parse_cmap_codespace_ranges(const std::vector<uint8_t>& bytes) {
+static std::vector<WinCodeSpaceRange> parse_cmap_codespace_ranges_internal(const std::vector<uint8_t>& bytes) {
     std::vector<WinCodeSpaceRange> ranges;
     const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     const std::vector<std::string> toks = tokenize_cmap_stream(text);
@@ -2531,7 +2533,7 @@ static bool parse_ref_id_from_expr(const std::string& expr, int& out_ref_id) {
     }
 
     int gen = 0;
-    if (wz_parse_obj_ref_fitz(t.c_str(), out_ref_id, gen) && out_ref_id > 0) {
+    if (wz_parse_obj_ref(t.c_str(), out_ref_id, gen) && out_ref_id > 0) {
         return true;
     }
     return false;
@@ -2580,7 +2582,7 @@ static WinColorSpaceDef colorspace_from_name(const std::string& name) {
     return make_colorspace_def(WinColorSpaceKind::Unknown, 0);
 }
 
-static bool parse_float_token_strict_fitz(const std::string& token, float& out_value) {
+static bool parse_float_token_strict(const std::string& token, float& out_value) {
     const std::string t = trim_copy(token);
     if (t.empty()) {
         return false;
@@ -2602,7 +2604,7 @@ static bool parse_float_token_strict_fitz(const std::string& token, float& out_v
     return true;
 }
 
-static std::vector<float> parse_float_array_expr_fitz(const std::string& expr) {
+static std::vector<float> parse_float_array_expr(const std::string& expr) {
     std::vector<float> out;
     const std::string t = trim_copy(expr);
     if (t.empty() || t[0] != '[') {
@@ -2613,14 +2615,14 @@ static std::vector<float> parse_float_array_expr_fitz(const std::string& expr) {
     out.reserve(items.size());
     for (const std::string& item : items) {
         float v = 0.0f;
-        if (parse_float_token_strict_fitz(item, v)) {
+        if (parse_float_token_strict(item, v)) {
             out.push_back(v);
         }
     }
     return out;
 }
 
-static std::vector<int> parse_int_array_expr_fitz(const std::string& expr) {
+static std::vector<int> parse_int_array_expr(const std::string& expr) {
     std::vector<int> out;
     const std::string t = trim_copy(expr);
     if (t.empty() || t[0] != '[') {
@@ -2638,7 +2640,7 @@ static std::vector<int> parse_int_array_expr_fitz(const std::string& expr) {
     return out;
 }
 
-static bool parse_lab_whitepoint_from_expr_fitz(const std::string& dict_expr,
+static bool parse_lab_whitepoint_from_expr(const std::string& dict_expr,
                                                 float& out_x,
                                                 float& out_y,
                                                 float& out_z) {
@@ -2652,7 +2654,7 @@ static bool parse_lab_whitepoint_from_expr_fitz(const std::string& dict_expr,
         return false;
     }
 
-    const std::vector<float> wp = parse_float_array_expr_fitz(it->second);
+    const std::vector<float> wp = parse_float_array_expr(it->second);
     if (wp.size() < 3) {
         return false;
     }
@@ -2663,7 +2665,7 @@ static bool parse_lab_whitepoint_from_expr_fitz(const std::string& dict_expr,
     return true;
 }
 
-static int parse_int_from_dict_entries_fitz(const std::map<std::string, std::string>& entries,
+static int parse_int_from_dict_entries(const std::map<std::string, std::string>& entries,
                                             const std::string& key,
                                             int fallback) {
     auto it = entries.find(key);
@@ -2677,7 +2679,7 @@ static int parse_int_from_dict_entries_fitz(const std::map<std::string, std::str
     return fallback;
 }
 
-static float parse_float_from_dict_entries_fitz(const std::map<std::string, std::string>& entries,
+static float parse_float_from_dict_entries(const std::map<std::string, std::string>& entries,
                                                 const std::string& key,
                                                 float fallback) {
     auto it = entries.find(key);
@@ -2685,31 +2687,31 @@ static float parse_float_from_dict_entries_fitz(const std::map<std::string, std:
         return fallback;
     }
     float out = 0.0f;
-    if (parse_float_token_strict_fitz(it->second, out)) {
+    if (parse_float_token_strict(it->second, out)) {
         return out;
     }
     return fallback;
 }
 
-static std::vector<float> parse_float_array_from_dict_entries_fitz(const std::map<std::string, std::string>& entries,
+static std::vector<float> parse_float_array_from_dict_entries(const std::map<std::string, std::string>& entries,
                                                                    const std::string& key) {
     auto it = entries.find(key);
     if (it == entries.end()) {
         return {};
     }
-    return parse_float_array_expr_fitz(it->second);
+    return parse_float_array_expr(it->second);
 }
 
-static std::vector<int> parse_int_array_from_dict_entries_fitz(const std::map<std::string, std::string>& entries,
+static std::vector<int> parse_int_array_from_dict_entries(const std::map<std::string, std::string>& entries,
                                                                const std::string& key) {
     auto it = entries.find(key);
     if (it == entries.end()) {
         return {};
     }
-    return parse_int_array_expr_fitz(it->second);
+    return parse_int_array_expr(it->second);
 }
 
-static int infer_component_count_from_kind_fitz(WinColorSpaceKind kind) {
+static int infer_component_count_from_kind(WinColorSpaceKind kind) {
     switch (kind) {
         case WinColorSpaceKind::DeviceGray:
             return 1;
@@ -2724,7 +2726,7 @@ static int infer_component_count_from_kind_fitz(WinColorSpaceKind kind) {
     }
 }
 
-static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
+static bool parse_tint_function_from_dict(const std::string& function_dict,
                                                const std::vector<uint8_t>& decoded_stream,
                                                int expected_input_count,
                                                int expected_output_count,
@@ -2738,10 +2740,10 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
         return false;
     }
 
-    const int function_type = parse_int_from_dict_entries_fitz(entries, "FunctionType", -1);
+    const int function_type = parse_int_from_dict_entries(entries, "FunctionType", -1);
     if (function_type == 2) {
-        std::vector<float> c0 = parse_float_array_from_dict_entries_fitz(entries, "C0");
-        std::vector<float> c1 = parse_float_array_from_dict_entries_fitz(entries, "C1");
+        std::vector<float> c0 = parse_float_array_from_dict_entries(entries, "C0");
+        std::vector<float> c1 = parse_float_array_from_dict_entries(entries, "C1");
 
         int out_count = expected_output_count;
         if (out_count <= 0) {
@@ -2764,7 +2766,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
             c1.resize(static_cast<size_t>(out_count), c1.back());
         }
 
-        std::vector<float> domain = parse_float_array_from_dict_entries_fitz(entries, "Domain");
+        std::vector<float> domain = parse_float_array_from_dict_entries(entries, "Domain");
         if (domain.size() < 2) {
             domain = {0.0f, 1.0f};
         }
@@ -2773,9 +2775,9 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
         out_space.tint_function_type = 2;
         out_space.tint_input_count = 1;
         out_space.tint_output_count = out_count;
-        out_space.tint_n = parse_float_from_dict_entries_fitz(entries, "N", 1.0f);
+        out_space.tint_n = parse_float_from_dict_entries(entries, "N", 1.0f);
         out_space.tint_domain = std::move(domain);
-        out_space.tint_range = parse_float_array_from_dict_entries_fitz(entries, "Range");
+        out_space.tint_range = parse_float_array_from_dict_entries(entries, "Range");
         out_space.tint_c0 = std::move(c0);
         out_space.tint_c1 = std::move(c1);
         out_space.tint_size.clear();
@@ -2787,7 +2789,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
     }
 
     if (function_type == 0) {
-        std::vector<int> size = parse_int_array_from_dict_entries_fitz(entries, "Size");
+        std::vector<int> size = parse_int_array_from_dict_entries(entries, "Size");
         if (size.empty()) {
             return false;
         }
@@ -2797,7 +2799,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
             }
         }
 
-        const int bits_per_sample = parse_int_from_dict_entries_fitz(entries, "BitsPerSample", 0);
+        const int bits_per_sample = parse_int_from_dict_entries(entries, "BitsPerSample", 0);
         if (bits_per_sample <= 0 || bits_per_sample > 32) {
             return false;
         }
@@ -2807,7 +2809,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
             input_count = expected_input_count;
         }
 
-        std::vector<float> domain = parse_float_array_from_dict_entries_fitz(entries, "Domain");
+        std::vector<float> domain = parse_float_array_from_dict_entries(entries, "Domain");
         if (domain.size() != static_cast<size_t>(input_count * 2)) {
             domain.assign(static_cast<size_t>(input_count * 2), 0.0f);
             for (int i = 0; i < input_count; ++i) {
@@ -2815,7 +2817,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
             }
         }
 
-        std::vector<float> range = parse_float_array_from_dict_entries_fitz(entries, "Range");
+        std::vector<float> range = parse_float_array_from_dict_entries(entries, "Range");
         int output_count = static_cast<int>(range.size() / 2);
         if (output_count <= 0) {
             output_count = expected_output_count;
@@ -2824,7 +2826,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
             output_count = 1;
         }
 
-        std::vector<float> encode = parse_float_array_from_dict_entries_fitz(entries, "Encode");
+        std::vector<float> encode = parse_float_array_from_dict_entries(entries, "Encode");
         if (encode.size() != static_cast<size_t>(input_count * 2)) {
             encode.clear();
             encode.reserve(static_cast<size_t>(input_count * 2));
@@ -2835,7 +2837,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
             }
         }
 
-        std::vector<float> decode = parse_float_array_from_dict_entries_fitz(entries, "Decode");
+        std::vector<float> decode = parse_float_array_from_dict_entries(entries, "Decode");
         if (decode.size() != static_cast<size_t>(output_count * 2)) {
             if (range.size() == static_cast<size_t>(output_count * 2)) {
                 decode = range;
@@ -2883,7 +2885,7 @@ static bool parse_tint_function_from_dict_fitz(const std::string& function_dict,
     return false;
 }
 
-static bool parse_tint_transform_expr_fitz(const std::string& expr,
+static bool parse_tint_transform_expr(const std::string& expr,
                                            WinPdfDocument* resolver,
                                            int expected_input_count,
                                            int expected_output_count,
@@ -2914,7 +2916,7 @@ static bool parse_tint_transform_expr_fitz(const std::string& expr,
             }
         }
 
-        return parse_tint_function_from_dict_fitz(
+        return parse_tint_function_from_dict(
             function_dict,
             function_stream,
             expected_input_count,
@@ -2923,13 +2925,13 @@ static bool parse_tint_transform_expr_fitz(const std::string& expr,
     }
 
     if (t.rfind("<<", 0) == 0) {
-        return parse_tint_function_from_dict_fitz(t, {}, expected_input_count, expected_output_count, out_space);
+        return parse_tint_function_from_dict(t, {}, expected_input_count, expected_output_count, out_space);
     }
 
     return false;
 }
 
-static bool evaluate_tint_transform_fitz(const WinColorSpaceDef& space,
+static bool evaluate_tint_transform(const WinColorSpaceDef& space,
                                          const std::vector<float>& inputs,
                                          std::vector<float>& out_values) {
     auto clamp_to_range = [](float v, float lo, float hi) -> float {
@@ -3098,7 +3100,7 @@ static bool evaluate_tint_transform_fitz(const WinColorSpaceDef& space,
     return false;
 }
 
-static bool read_be_u16_fitz(const std::vector<uint8_t>& data, size_t off, uint16_t& out) {
+static bool read_be_u16(const std::vector<uint8_t>& data, size_t off, uint16_t& out) {
     if (off + 2 > data.size()) {
         return false;
     }
@@ -3107,7 +3109,7 @@ static bool read_be_u16_fitz(const std::vector<uint8_t>& data, size_t off, uint1
     return true;
 }
 
-static bool read_be_u32_fitz(const std::vector<uint8_t>& data, size_t off, uint32_t& out) {
+static bool read_be_u32(const std::vector<uint8_t>& data, size_t off, uint32_t& out) {
     if (off + 4 > data.size()) {
         return false;
     }
@@ -3118,9 +3120,9 @@ static bool read_be_u32_fitz(const std::vector<uint8_t>& data, size_t off, uint3
     return true;
 }
 
-static bool read_be_s15fixed16_fitz(const std::vector<uint8_t>& data, size_t off, float& out) {
+static bool read_be_s15fixed16(const std::vector<uint8_t>& data, size_t off, float& out) {
     uint32_t raw = 0;
-    if (!read_be_u32_fitz(data, off, raw)) {
+    if (!read_be_u32(data, off, raw)) {
         return false;
     }
     const int32_t sval = static_cast<int32_t>(raw);
@@ -3128,7 +3130,7 @@ static bool read_be_s15fixed16_fitz(const std::vector<uint8_t>& data, size_t off
     return true;
 }
 
-static bool parse_icc_xyz_tag_fitz(const std::vector<uint8_t>& profile,
+static bool parse_icc_xyz_tag(const std::vector<uint8_t>& profile,
                                    size_t tag_off,
                                    size_t tag_len,
                                    float& x,
@@ -3143,12 +3145,12 @@ static bool parse_icc_xyz_tag_fitz(const std::vector<uint8_t>& profile,
         return false;
     }
 
-    return read_be_s15fixed16_fitz(profile, tag_off + 8, x) &&
-           read_be_s15fixed16_fitz(profile, tag_off + 12, y) &&
-           read_be_s15fixed16_fitz(profile, tag_off + 16, z);
+    return read_be_s15fixed16(profile, tag_off + 8, x) &&
+           read_be_s15fixed16(profile, tag_off + 12, y) &&
+           read_be_s15fixed16(profile, tag_off + 16, z);
 }
 
-static bool parse_icc_curve_tag_fitz(const std::vector<uint8_t>& profile,
+static bool parse_icc_curve_tag(const std::vector<uint8_t>& profile,
                                      size_t tag_off,
                                      size_t tag_len,
                                      WinIccCurve& out_curve) {
@@ -3161,7 +3163,7 @@ static bool parse_icc_curve_tag_fitz(const std::vector<uint8_t>& profile,
     const std::string type(reinterpret_cast<const char*>(profile.data() + tag_off), 4);
     if (type == "curv") {
         uint32_t count = 0;
-        if (!read_be_u32_fitz(profile, tag_off + 8, count)) {
+        if (!read_be_u32(profile, tag_off + 8, count)) {
             return false;
         }
 
@@ -3172,7 +3174,7 @@ static bool parse_icc_curve_tag_fitz(const std::vector<uint8_t>& profile,
 
         if (count == 1) {
             uint16_t gamma_u8f8 = 0;
-            if (!read_be_u16_fitz(profile, tag_off + 12, gamma_u8f8)) {
+            if (!read_be_u16(profile, tag_off + 12, gamma_u8f8)) {
                 return false;
             }
             out_curve.type = WinIccCurveType::Gamma;
@@ -3192,7 +3194,7 @@ static bool parse_icc_curve_tag_fitz(const std::vector<uint8_t>& profile,
         out_curve.table.resize(static_cast<size_t>(count));
         for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
             uint16_t v = 0;
-            if (!read_be_u16_fitz(profile, tag_off + 12 + i * 2, v)) {
+            if (!read_be_u16(profile, tag_off + 12 + i * 2, v)) {
                 return false;
             }
             out_curve.table[i] = static_cast<float>(v) / 65535.0f;
@@ -3202,12 +3204,12 @@ static bool parse_icc_curve_tag_fitz(const std::vector<uint8_t>& profile,
 
     if (type == "para") {
         uint16_t fn_type = 0;
-        if (!read_be_u16_fitz(profile, tag_off + 8, fn_type)) {
+        if (!read_be_u16(profile, tag_off + 8, fn_type)) {
             return false;
         }
         if (fn_type == 0 && tag_len >= 16 && tag_off + 16 <= profile.size()) {
             float gamma = 1.0f;
-            if (!read_be_s15fixed16_fitz(profile, tag_off + 12, gamma)) {
+            if (!read_be_s15fixed16(profile, tag_off + 12, gamma)) {
                 return false;
             }
             out_curve.type = WinIccCurveType::Gamma;
@@ -3219,7 +3221,7 @@ static bool parse_icc_curve_tag_fitz(const std::vector<uint8_t>& profile,
     return false;
 }
 
-static bool parse_icc_rgb_profile_stream_fitz(const std::vector<uint8_t>& profile,
+static bool parse_icc_rgb_profile_stream(const std::vector<uint8_t>& profile,
                                               WinColorSpaceDef& out_space) {
     if (profile.size() < 132) {
         return false;
@@ -3231,7 +3233,7 @@ static bool parse_icc_rgb_profile_stream_fitz(const std::vector<uint8_t>& profil
     }
 
     uint32_t tag_count = 0;
-    if (!read_be_u32_fitz(profile, 128, tag_count)) {
+    if (!read_be_u32(profile, 128, tag_count)) {
         return false;
     }
 
@@ -3250,8 +3252,8 @@ static bool parse_icc_rgb_profile_stream_fitz(const std::vector<uint8_t>& profil
         const std::string sig(reinterpret_cast<const char*>(profile.data() + entry_off), 4);
         uint32_t off_u32 = 0;
         uint32_t len_u32 = 0;
-        if (!read_be_u32_fitz(profile, entry_off + 4, off_u32) ||
-            !read_be_u32_fitz(profile, entry_off + 8, len_u32)) {
+        if (!read_be_u32(profile, entry_off + 4, off_u32) ||
+            !read_be_u32(profile, entry_off + 8, len_u32)) {
             entry_off += 12;
             continue;
         }
@@ -3278,18 +3280,18 @@ static bool parse_icc_rgb_profile_stream_fitz(const std::vector<uint8_t>& profil
     float rX = 0.0f, rY = 0.0f, rZ = 0.0f;
     float gX = 0.0f, gY = 0.0f, gZ = 0.0f;
     float bX = 0.0f, bY = 0.0f, bZ = 0.0f;
-    if (!parse_icc_xyz_tag_fitz(profile, it_rxyz->second.off, it_rxyz->second.len, rX, rY, rZ) ||
-        !parse_icc_xyz_tag_fitz(profile, it_gxyz->second.off, it_gxyz->second.len, gX, gY, gZ) ||
-        !parse_icc_xyz_tag_fitz(profile, it_bxyz->second.off, it_bxyz->second.len, bX, bY, bZ)) {
+    if (!parse_icc_xyz_tag(profile, it_rxyz->second.off, it_rxyz->second.len, rX, rY, rZ) ||
+        !parse_icc_xyz_tag(profile, it_gxyz->second.off, it_gxyz->second.len, gX, gY, gZ) ||
+        !parse_icc_xyz_tag(profile, it_bxyz->second.off, it_bxyz->second.len, bX, bY, bZ)) {
         return false;
     }
 
     WinIccCurve trc_r;
     WinIccCurve trc_g;
     WinIccCurve trc_b;
-    if (!parse_icc_curve_tag_fitz(profile, it_rtrc->second.off, it_rtrc->second.len, trc_r) ||
-        !parse_icc_curve_tag_fitz(profile, it_gtrc->second.off, it_gtrc->second.len, trc_g) ||
-        !parse_icc_curve_tag_fitz(profile, it_btrc->second.off, it_btrc->second.len, trc_b)) {
+    if (!parse_icc_curve_tag(profile, it_rtrc->second.off, it_rtrc->second.len, trc_r) ||
+        !parse_icc_curve_tag(profile, it_gtrc->second.off, it_gtrc->second.len, trc_g) ||
+        !parse_icc_curve_tag(profile, it_btrc->second.off, it_btrc->second.len, trc_b)) {
         return false;
     }
 
@@ -3333,7 +3335,7 @@ static WinColorSpaceDef classify_colorspace_ref(int ref_id,
                 if (icc_profile.empty()) {
                     icc_profile = obj.stream;
                 }
-                parse_icc_rgb_profile_stream_fitz(icc_profile, out);
+                parse_icc_rgb_profile_stream(icc_profile, out);
             }
             return out;
         }
@@ -3431,7 +3433,7 @@ static WinColorSpaceDef classify_colorspace_expr(const std::string& expr,
                 float wx = out.lab_white_x;
                 float wy = out.lab_white_y;
                 float wz = out.lab_white_z;
-                if (parse_lab_whitepoint_from_expr_fitz(items[1], wx, wy, wz)) {
+                if (parse_lab_whitepoint_from_expr(items[1], wx, wy, wz)) {
                     if (wx > 0.0f && wy > 0.0f && wz > 0.0f) {
                         out.lab_white_x = wx;
                         out.lab_white_y = wy;
@@ -3452,9 +3454,9 @@ static WinColorSpaceDef classify_colorspace_expr(const std::string& expr,
             if (items.size() >= 4) {
                 int expected_outputs = out.alt_component_count;
                 if (expected_outputs <= 0) {
-                    expected_outputs = infer_component_count_from_kind_fitz(out.alt_kind);
+                    expected_outputs = infer_component_count_from_kind(out.alt_kind);
                 }
-                parse_tint_transform_expr_fitz(items[3], resolver, out.component_count, expected_outputs, out, depth + 1);
+                parse_tint_transform_expr(items[3], resolver, out.component_count, expected_outputs, out, depth + 1);
             }
             return out;
         }
@@ -3484,9 +3486,9 @@ static WinColorSpaceDef classify_colorspace_expr(const std::string& expr,
             if (items.size() >= 4) {
                 int expected_outputs = out.alt_component_count;
                 if (expected_outputs <= 0) {
-                    expected_outputs = infer_component_count_from_kind_fitz(out.alt_kind);
+                    expected_outputs = infer_component_count_from_kind(out.alt_kind);
                 }
-                parse_tint_transform_expr_fitz(items[3], resolver, out.component_count, expected_outputs, out, depth + 1);
+                parse_tint_transform_expr(items[3], resolver, out.component_count, expected_outputs, out, depth + 1);
             }
             return out;
         }
@@ -3537,7 +3539,7 @@ static void parse_colorspace_dict_into_map(WinPdfDocument* resolver,
     }
 }
 
-static std::string parse_name_or_string_value_after_key_fitz(const std::string& dict, const std::string& key) {
+static std::string parse_name_or_string_value_after_key(const std::string& dict, const std::string& key) {
     size_t pos = dict.find(key);
     if (pos == std::string::npos) {
         return {};
@@ -3579,13 +3581,13 @@ static std::string parse_name_or_string_value_after_key_fitz(const std::string& 
     return {};
 }
 
-static std::string build_cid_collection_name_from_cidsysteminfo_fitz(const std::string& cid_system_info_dict) {
+static std::string build_cid_collection_name_from_cidsysteminfo(const std::string& cid_system_info_dict) {
     if (cid_system_info_dict.empty()) {
         return {};
     }
 
-    std::string registry = trim_copy(parse_name_or_string_value_after_key_fitz(cid_system_info_dict, "/Registry"));
-    std::string ordering = trim_copy(parse_name_or_string_value_after_key_fitz(cid_system_info_dict, "/Ordering"));
+    std::string registry = trim_copy(parse_name_or_string_value_after_key(cid_system_info_dict, "/Registry"));
+    std::string ordering = trim_copy(parse_name_or_string_value_after_key(cid_system_info_dict, "/Ordering"));
     if (registry.empty() || ordering.empty()) {
         return {};
     }
@@ -3609,7 +3611,7 @@ static std::map<int, int> make_glyph_table_encoding_map(const char *const names[
             continue;
         }
 
-        int cp = glyph_name_to_unicode_fitz(std::string(gname));
+        int cp = glyph_name_to_unicode(std::string(gname));
         if (cp > 0 && cp <= 0x10FFFF) {
             m[i] = cp;
         }
@@ -3857,47 +3859,7 @@ static bool extract_actual_text_from_dict(const std::string& dict_raw, std::stri
     return false;
 }
 
-static int glyph_name_to_unicode(std::string name) {
-    if (name.empty()) {
-        return 0;
-    }
 
-    size_t dot = name.find('.');
-    if (dot != std::string::npos) {
-        name = name.substr(0, dot);
-    }
-
-    size_t underscore = name.find('_');
-    if (underscore != std::string::npos) {
-        return glyph_name_to_unicode(name.substr(0, underscore));
-    }
-
-    const auto& builtin_glyphs = WinExtract::get_adobe_glyph_map();
-    auto builtin_it = builtin_glyphs.find(name);
-    if (builtin_it != builtin_glyphs.end()) {
-        return builtin_it->second;
-    }
-
-    if (name.size() >= 7 && name.rfind("uni", 0) == 0 && ((name.size() - 3) % 4 == 0)) {
-        std::string hex = name.substr(3, 4);
-        return parse_hex_codepoint(hex);
-    }
-    if (name.size() >= 5 && name[0] == 'u') {
-        std::string hex = name.substr(1);
-        bool ok = true;
-        for (char c : hex) {
-            if (!std::isxdigit(static_cast<unsigned char>(c))) {
-                ok = false;
-                break;
-            }
-        }
-        if (ok) {
-            return parse_hex_codepoint(hex);
-        }
-    }
-
-    return 0;
-}
 
 static void apply_differences_to_map(const std::string& dict, std::map<int, int>& map_out, std::map<int, std::string>* names_out = nullptr) {
     size_t diff_pos = dict.find("/Differences");
@@ -3932,7 +3894,7 @@ static void apply_differences_to_map(const std::string& dict, std::map<int, int>
                 if (names_out) {
                     (*names_out)[code] = gname;
                 }
-                int cp = glyph_name_to_unicode_fitz(gname);
+                int cp = glyph_name_to_unicode(gname);
                 if (cp > 0) {
                     map_out[code] = cp;
                 }
@@ -4226,7 +4188,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         }
 #endif
 
-        // MuPDF's ICC-backed DeviceCMYK maps full K-only black to a dark neutral,
         // not absolute RGB 0. Keep that anchor for parity in Separation /Black flows.
         if (cc <= 1e-6f && mm <= 1e-6f && yy <= 1e-6f && kk >= 0.999f) {
             return (34u << 16) | (31u << 8) | 31u;
@@ -4256,8 +4217,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         const float bb = std::max(-128.0f, std::min(127.0f, b));
 
 #if defined(WINNERZ_USE_LCMS2) && WINNERZ_USE_LCMS2
-        // MuPDF maps device Lab through its built-in ICC Lab profile (D50). Use that
-        // path when the Lab whitepoint is effectively D50 to match fitz color output.
         if (std::abs(xw - 0.964203f) <= 1e-4f &&
             std::abs(yw - 1.000000f) <= 1e-4f &&
             std::abs(zw - 0.824905f) <= 1e-4f) {
@@ -4488,7 +4447,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         if ((kind == WinColorSpaceKind::Separation || kind == WinColorSpaceKind::DeviceN) &&
             active_space.has_tint_transform) {
             std::vector<float> tint_values;
-            if (evaluate_tint_transform_fitz(active_space, comps, tint_values) && !tint_values.empty()) {
+            if (evaluate_tint_transform(active_space, comps, tint_values) && !tint_values.empty()) {
                 WinColorSpaceKind tint_kind = active_space.alt_kind;
                 if (tint_kind == WinColorSpaceKind::Unknown) {
                     const int n = static_cast<int>(tint_values.size());
@@ -4645,22 +4604,16 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             return false;
         };
 
-        // [PATCH 4 FIX]: sanitize_unicode_sequence — giữ nguyên U+FFFD như Fitz.
-        // Fitz KHÔNG thay U+FFFD bằng raw code. Đây là ký tự thay thế chuẩn Unicode.
         auto sanitize_unicode_sequence = [](int code, std::vector<int>& seq) -> bool {
             auto is_valid_scalar = [](int cp) {
                 return cp > 0 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
             };
 
             if (seq.empty()) {
-                // Không có mapping → dùng U+FFFD như Fitz
                 seq.push_back(0xFFFD);
                 return false;
             }
 
-            // [PATCH 4 FIX]: KHÔNG ghi đè U+FFFD bằng raw code.
-            // Fitz giữ nguyên U+FFFD làm ký tự thay thế chuẩn.
-            // (Xóa logic sai: if (seq.front() == 0xFFFD) seq.front() = code;)
 
             std::vector<int> clean;
             clean.reserve(seq.size());
@@ -4671,7 +4624,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             }
 
             if (clean.empty()) {
-                // Toàn bộ seq không hợp lệ → U+FFFD như Fitz
                 clean.push_back(0xFFFD);
                 seq.swap(clean);
                 return false;
@@ -4800,8 +4752,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                 if (it != active_font_map->end()) {
                     unicode_seq = it->second;
 
-                    // [PATCH 1]: Normalize whitespace control chars (8–13) → space, như Fitz.
-                    // Fitz: if (ucs >= 8 && ucs <= 13) ucs = 32;
+
                     for (int& ucs : unicode_seq) {
                         if (ucs >= 8 && ucs <= 13) {
                             ucs = ' ';
@@ -4838,7 +4789,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
 
             bool cid_fallback = false;
 
-            // [PATCH 3]: Fallback → U+FFFD (chuẩn Unicode/Fitz), không dùng raw code.
             if (unicode_seq.empty()) {
                 unicode_seq.push_back(0xFFFD);
                 cid_fallback = false; // U+FFFD là ký tự hợp lệ, không phải CID fallback
@@ -4875,7 +4825,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             }
         }
 
-        // [PATCH 3]: Đồng bộ 100% logic ActualText của Fitz (hàm do_extract_within_actualtext)
         ActualTextState* at = active_actualtext();
         
         // Nếu không có ActualText, in chữ như bình thường
@@ -5007,8 +4956,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             set_identity(st.tlm);
             active_bidi = 0;
             extractor.hint_new_text_obj();
-            // Fitz: dev->new_obj chỉ bật khi bắt đầu một lần paint text (sau flush, vd. ET),
-            // không phải mỗi Tj — trong BT..ET nhiều Tf/Tj vẫn một chuỗi ký tự liên tục.
         } else if (op == "q") {
             GraphicsStateSnapshot snap;
             snap.ctm = {ctm[0], ctm[1], ctm[2], ctm[3], ctm[4], ctm[5]};
@@ -5710,7 +5657,7 @@ std::vector<uint8_t> WinPdfDocument::get_page_content(int page_idx) {
                 int gen = 0;
                 char r = 0;
                 int consumed = 0;
-                if (!wz_parse_xref_line_3_fitz(p, id, gen, r, consumed) || consumed <= 0) {
+                if (!wz_parse_xref_line_3(p, id, gen, r, consumed) || consumed <= 0) {
                     break;
                 }
                 if (r == 'R' && id > 0) {
@@ -5802,7 +5749,7 @@ std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_
             size_t p = pos + 9;
             while (p < src.size() && std::isspace(static_cast<unsigned char>(src[p]))) ++p;
             char* end_ptr = nullptr;
-            long v = wz_strtol_fitz(src.c_str() + p, &end_ptr, 10);
+            long v = wz_strtol(src.c_str() + p, &end_ptr, 10);
             if (end_ptr != src.c_str() + p && v >= 0) return v;
             if (pos == 0) break;
             pos = src.rfind("startxref", pos - 1);
@@ -5854,10 +5801,10 @@ std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_
         if (value_end == value_start) {
             const char* p = dict.c_str() + value_start;
             char* e1 = nullptr;
-            long v1 = wz_strtol_fitz(p, &e1, 10);
+            long v1 = wz_strtol(p, &e1, 10);
             if (e1 != p && v1 > 0) {
                 char* e2 = nullptr;
-                long v2 = wz_strtol_fitz(e1, &e2, 10);
+                long v2 = wz_strtol(e1, &e2, 10);
                 if (e2 != e1 && v2 >= 0) {
                     while (*e2 && std::isspace(static_cast<unsigned char>(*e2))) ++e2;
                     if (*e2 == 'R') {
@@ -5985,7 +5932,7 @@ bool WinPdfDocument::save_multiple_pages_content_incremental(
             size_t p = pos + 9;
             while (p < src.size() && std::isspace(static_cast<unsigned char>(src[p]))) ++p;
             char* end_ptr = nullptr;
-            long v = wz_strtol_fitz(src.c_str() + p, &end_ptr, 10);
+            long v = wz_strtol(src.c_str() + p, &end_ptr, 10);
             if (end_ptr != src.c_str() + p && v >= 0) return v;
             if (pos == 0) break;
             pos = src.rfind("startxref", pos - 1);
@@ -6037,10 +5984,10 @@ bool WinPdfDocument::save_multiple_pages_content_incremental(
         if (value_end == value_start) {
             const char* p = dict.c_str() + value_start;
             char* e1 = nullptr;
-            long v1 = wz_strtol_fitz(p, &e1, 10);
+            long v1 = wz_strtol(p, &e1, 10);
             if (e1 != p && v1 > 0) {
                 char* e2 = nullptr;
-                long v2 = wz_strtol_fitz(e1, &e2, 10);
+                long v2 = wz_strtol(e1, &e2, 10);
                 if (e2 != e1 && v2 >= 0) {
                     while (*e2 && std::isspace(static_cast<unsigned char>(*e2))) ++e2;
                     if (*e2 == 'R') {
@@ -6177,7 +6124,7 @@ bool WinPdfDocument::save_page_content_incremental(
             }
 
             char* end_ptr = nullptr;
-            long v = wz_strtol_fitz(src.c_str() + p, &end_ptr, 10);
+            long v = wz_strtol(src.c_str() + p, &end_ptr, 10);
             if (end_ptr != src.c_str() + p && v >= 0) {
                 return v;
             }
@@ -6248,10 +6195,10 @@ bool WinPdfDocument::save_page_content_incremental(
         if (value_end == value_start) {
             const char* p = dict.c_str() + value_start;
             char* e1 = nullptr;
-            long v1 = wz_strtol_fitz(p, &e1, 10);
+            long v1 = wz_strtol(p, &e1, 10);
             if (e1 != p && v1 > 0) {
                 char* e2 = nullptr;
-                long v2 = wz_strtol_fitz(e1, &e2, 10);
+                long v2 = wz_strtol(e1, &e2, 10);
                 if (e2 != e1 && v2 >= 0) {
                     while (*e2 && std::isspace(static_cast<unsigned char>(*e2))) {
                         ++e2;
@@ -6596,7 +6543,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                     if (gid_to_unicode.find(g) == gid_to_unicode.end()) {
                         char gname[64];
                         if (FT_Get_Glyph_Name(face, g, gname, sizeof(gname)) == 0) {
-                            int cp = glyph_name_to_unicode_fitz(std::string(gname));
+                            int cp = glyph_name_to_unicode(std::string(gname));
                             if (cp > 0) {
                                 gid_to_unicode[g] = cp;
                             }
@@ -6734,7 +6681,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             if (is_invalid_cp(cp) && FT_HAS_GLYPH_NAMES(face)) {
                 char glyph_name[256] = {0};
                 if (FT_Get_Glyph_Name(face, gid, glyph_name, static_cast<FT_UInt>(sizeof(glyph_name))) == 0 && glyph_name[0] != '\0') {
-                    cp = glyph_name_to_unicode_fitz(std::string(glyph_name));
+                    cp = glyph_name_to_unicode(std::string(glyph_name));
                 }
             }
 
@@ -6825,7 +6772,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
         WinPdfObject font_obj = read_obj(font_obj_id);
         const std::string subtype = parse_name_value_after_key(font_obj.dict, "/Subtype");
         const bool is_type0_subtype = (subtype == "Type0");
-        const bool is_type3_subtype = is_type3_font_subtype_fitz(subtype);
+        const bool is_type3_subtype = is_type3_font_subtype(subtype);
         std::unordered_map<int, std::vector<int>> cmap;
         std::string cid_collection;
         int cmap_ref = parse_ref_id_after_key(font_obj.dict, "/ToUnicode");
@@ -6837,14 +6784,14 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                     cmap_stream = cmap_obj.stream;
                 }
 
-                cmap = parse_tounicode_cmap_fitz(cmap_stream);
+                cmap = parse_tounicode_cmap_internal(cmap_stream);
             }
         }
 
         if (cmap.empty()) {
             std::string to_unicode_name = parse_name_value_after_key(font_obj.dict, "/ToUnicode");
             if (!to_unicode_name.empty()) {
-                const auto& named_cmap = load_system_unicode_cmap_by_name_fitz(to_unicode_name);
+                const auto& named_cmap = load_system_unicode_cmap_by_name(to_unicode_name);
                 if (!named_cmap.empty()) {
                     cmap = named_cmap;
                 }
@@ -6896,9 +6843,9 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                     extract_inline_dict_after_key(cid_font_obj.dict, "/CIDSystemInfo", cid_system_info_dict);
                 }
 
-                cid_collection = build_cid_collection_name_from_cidsysteminfo_fitz(cid_system_info_dict);
+                cid_collection = build_cid_collection_name_from_cidsysteminfo(cid_system_info_dict);
                 if (!cid_collection.empty()) {
-                    const auto& cid_fallback = load_collection_unicode_cmap_fitz(cid_collection);
+                    const auto& cid_fallback = load_collection_unicode_cmap(cid_collection);
                     if (!cid_fallback.empty()) {
                         cmap = cid_fallback;
                     }
@@ -6958,7 +6905,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
 #endif
 
         if (is_type3_subtype) {
-            apply_type3_ascii_fallback_fitz(cmap);
+            apply_type3_ascii_fallback(cmap);
         }
 
         if (!cmap.empty()) {
@@ -7125,7 +7072,7 @@ WinFontCodeSpaceMap WinPdfDocument::get_page_font_codespace_map(int page_idx) {
                     cmap_stream = enc_obj.stream;
                 }
                 if (!cmap_stream.empty()) {
-                    ranges = parse_cmap_codespace_ranges_fitz(cmap_stream);
+                    ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
                 }
             }
         }
@@ -7151,7 +7098,7 @@ WinFontCodeSpaceMap WinPdfDocument::get_page_font_codespace_map(int page_idx) {
                         cmap_stream = cmap_obj.stream;
                     }
                     if (!cmap_stream.empty()) {
-                        ranges = parse_cmap_codespace_ranges_fitz(cmap_stream);
+                        ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
                     }
                 }
             }
@@ -7256,7 +7203,7 @@ WinFontMatrixMap WinPdfDocument::get_page_font_matrix_map(int page_idx) {
 
         int ref_id = 0;
         int ref_gen = 0;
-        if (wz_parse_obj_ref_fitz(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
+        if (wz_parse_obj_ref(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
             WinPdfObject arr_obj = read_obj(ref_id);
             std::string src = !arr_obj.body.empty() ? arr_obj.body : arr_obj.dict;
             size_t arr_start = src.find('[');
@@ -7426,7 +7373,7 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
 
         int ref_id = 0;
         int ref_gen = 0;
-        if (wz_parse_obj_ref_fitz(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
+        if (wz_parse_obj_ref(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
             WinPdfObject arr_obj = read_obj(ref_id);
             std::string src = !arr_obj.body.empty() ? arr_obj.body : arr_obj.dict;
             size_t arr_start = src.find('[');
@@ -7609,28 +7556,70 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
             return false;
         }
 
-        const float units_per_em = (face->units_per_EM > 0) ? static_cast<float>(face->units_per_EM) : 1000.0f;
-        if (units_per_em <= 0.0f) {
-            FT_Done_Face(face);
-            return false;
-        }
+        const FT_Long units_per_em = (face->units_per_EM > 0) ? face->units_per_EM : 1000;
+        const int LOAD_FLAGS = FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP | FT_LOAD_IGNORE_TRANSFORM;
+        const FT_Long num_glyphs = face->num_glyphs;
 
+        float asc_max = 0.0f;
+        float desc_min = 0.0f;
+        bool got_bounds = false;
+        int success_count = 0;
+
+        for (FT_Long gid = 0; gid < num_glyphs; ++gid) {
+            if (FT_Load_Glyph(face, static_cast<FT_UInt>(gid), LOAD_FLAGS) != 0) continue;
+            success_count++;
+
+            // Dùng outline bbox nếu có (vector font) - y chang fz_bound_glyph
+            FT_BBox cbox;
+            if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE && face->glyph->outline.n_contours > 0) {
+                FT_Outline_Get_CBox(&face->glyph->outline, &cbox);
+            } else {
+                // Bitmap glyph: dùng metrics
+                const FT_Glyph_Metrics& gm = face->glyph->metrics;
+                cbox.xMin = gm.horiBearingX;
+                cbox.yMin = gm.horiBearingY - gm.height;
+                cbox.xMax = gm.horiBearingX + gm.width;
+                cbox.yMax = gm.horiBearingY;
+            }
+
+            const float y_max = static_cast<float>(cbox.yMax) / static_cast<float>(units_per_em);
+            const float y_min = static_cast<float>(cbox.yMin) / static_cast<float>(units_per_em);
+
+            if (!got_bounds) {
+                asc_max = y_max;
+                desc_min = y_min;
+                got_bounds = true;
+            } else {
+                if (y_max > asc_max) asc_max = y_max;
+                if (y_min < desc_min) desc_min = y_min;
+            }
+        }
+        
+        printf("DEBUG FREETYPE: num_glyphs=%ld, success=%d, got_bounds=%d, asc_max=%.4f, desc_min=%.4f, units=%ld\n", num_glyphs, success_count, got_bounds, asc_max, desc_min, units_per_em);
+
+        // Initialize with global font metrics
         if (face->ascender != 0) {
-            metrics.ascender = static_cast<float>(face->ascender) / units_per_em;
-            if (metrics.ascender < 0.0f) {
-                metrics.ascender = -metrics.ascender;
-            }
+            metrics.ascender = static_cast<float>(face->ascender) / static_cast<float>(units_per_em);
+            if (metrics.ascender < 0.0f) metrics.ascender = -metrics.ascender;
+        } else {
+            metrics.ascender = 0.8f;
+        }
+        
+        if (face->descender != 0) {
+            metrics.descender = static_cast<float>(face->descender) / static_cast<float>(units_per_em);
+            if (metrics.descender > 0.0f) metrics.descender = -metrics.descender;
+        } else {
+            metrics.descender = -0.2f;
         }
 
-        if (face->descender != 0) {
-            metrics.descender = static_cast<float>(face->descender) / units_per_em;
-            if (metrics.descender > 0.0f) {
-                metrics.descender = -metrics.descender;
-            }
+        if (got_bounds) {
+            // Expand ascender/descender if glyph bounds are larger (mimic MuPDF fz_calculate_font_ascender_descender)
+            if (asc_max > metrics.ascender) metrics.ascender = asc_max;
+            if (desc_min < metrics.descender) metrics.descender = desc_min;
         }
 
         FT_Done_Face(face);
-        return true;
+        return got_bounds || (face != nullptr);
     };
 #endif
 
@@ -7644,7 +7633,7 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
 
         WinPdfObject font_obj = read_obj(font_obj_id);
         const std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFont");
-        const bool is_type3_subtype = is_type3_font_subtype_fitz(parse_name_value_after_key(font_obj.dict, "/Subtype"));
+        const bool is_type3_subtype = is_type3_font_subtype(parse_name_value_after_key(font_obj.dict, "/Subtype"));
 
         WinFontVerticalMetrics metrics = get_base14_vertical_metrics(base_font_name);
         metrics.base_font = base_font_name;
@@ -7856,7 +7845,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
 
         int ref_id = 0;
         int ref_gen = 0;
-        if (wz_parse_obj_ref_fitz(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
+        if (wz_parse_obj_ref(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
             WinPdfObject arr_obj = read_obj(ref_id);
             std::string src = !arr_obj.body.empty() ? arr_obj.body : arr_obj.dict;
             size_t arr_start = src.find('[');
@@ -8077,7 +8066,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
             WinPdfObject font_obj = read_obj(font_obj_id);
             const std::string subtype = parse_name_value_after_key(font_obj.dict, "/Subtype");
             const bool is_type0_subtype = (subtype == "Type0");
-            const bool is_type3_subtype = is_type3_font_subtype_fitz(subtype);
+            const bool is_type3_subtype = is_type3_font_subtype(subtype);
             std::string cid_collection;
 
             int cmap_ref = parse_ref_id_after_key(font_obj.dict, "/ToUnicode");
@@ -8089,14 +8078,14 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                     if (cmap_stream.empty()) {
                         cmap_stream = cmap_obj.stream;
                     }
-                    cmap = parse_tounicode_cmap_fitz(cmap_stream);
+                    cmap = parse_tounicode_cmap_internal(cmap_stream);
                 }
             }
 
             if (cmap.empty()) {
                 std::string to_unicode_name = parse_name_value_after_key(font_obj.dict, "/ToUnicode");
                 if (!to_unicode_name.empty()) {
-                    const auto& named_cmap = load_system_unicode_cmap_by_name_fitz(to_unicode_name);
+                    const auto& named_cmap = load_system_unicode_cmap_by_name(to_unicode_name);
                     if (!named_cmap.empty()) {
                         cmap = named_cmap;
                     }
@@ -8133,9 +8122,9 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                         extract_inline_dict_after_key(cid_font_obj.dict, "/CIDSystemInfo", cid_system_info_dict);
                     }
 
-                    cid_collection = build_cid_collection_name_from_cidsysteminfo_fitz(cid_system_info_dict);
+                    cid_collection = build_cid_collection_name_from_cidsysteminfo(cid_system_info_dict);
                     if (!cid_collection.empty()) {
-                        const auto& cid_fallback = load_collection_unicode_cmap_fitz(cid_collection);
+                        const auto& cid_fallback = load_collection_unicode_cmap(cid_collection);
                         if (!cid_fallback.empty()) {
                             cmap = cid_fallback;
                         }
@@ -8182,7 +8171,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
             }
 
             if (is_type3_subtype) {
-                apply_type3_ascii_fallback_fitz(cmap);
+                apply_type3_ascii_fallback(cmap);
             }
 
             if (!cmap.empty()) {
@@ -8209,7 +8198,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                             cmap_stream = enc_obj.stream;
                         }
                         if (!cmap_stream.empty()) {
-                            ranges = parse_cmap_codespace_ranges_fitz(cmap_stream);
+                            ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
                         }
                     }
                 }
@@ -8230,7 +8219,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                             cmap_stream = cmap_obj.stream;
                         }
                         if (!cmap_stream.empty()) {
-                            ranges = parse_cmap_codespace_ranges_fitz(cmap_stream);
+                            ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
                         }
                     }
                 }
@@ -8283,7 +8272,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                     has_metrics = parse_vertical_metrics_from_descriptor(descriptor_dict, metrics);
                 }
 
-                const bool is_type3_subtype = is_type3_font_subtype_fitz(parse_name_value_after_key(font_obj.dict, "/Subtype"));
+                const bool is_type3_subtype = is_type3_font_subtype(parse_name_value_after_key(font_obj.dict, "/Subtype"));
                 if (!has_metrics && is_type3_subtype) {
                     std::string bbox_array;
                     std::array<float, 4> bbox = {0, 0, 0, 0};
@@ -8327,7 +8316,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                 // replace inherited widths for the same resource name.
                 std::unordered_map<int, float> widths;
                 const std::string subtype = parse_name_value_after_key(font_obj.dict, "/Subtype");
-                const bool is_type3_subtype = is_type3_font_subtype_fitz(subtype);
+                const bool is_type3_subtype = is_type3_font_subtype(subtype);
                 std::string descriptor_dict;
                 int descriptor_ref = parse_ref_id_after_key(font_obj.dict, "/FontDescriptor");
                 if (descriptor_ref > 0) {
@@ -8467,7 +8456,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                                     break;
                                 }
                                 p = end_ptr;
-                                widths[code] = scale_type3_width_fitz(static_cast<float>(w), type3_width_scale);
+                                widths[code] = scale_type3_width(static_cast<float>(w), type3_width_scale);
                                 ++code;
                             }
                         }
@@ -8798,7 +8787,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
 
         int ref_id = 0;
         int ref_gen = 0;
-        if (wz_parse_obj_ref_fitz(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
+        if (wz_parse_obj_ref(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
             WinPdfObject arr_obj = read_obj(ref_id);
             std::string src = !arr_obj.body.empty() ? arr_obj.body : arr_obj.dict;
             size_t arr_start = src.find('[');
@@ -9250,7 +9239,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
 
         WinPdfObject font_obj = read_obj(font_obj_id);
         std::string subtype = parse_name_value_after_key(font_obj.dict, "/Subtype");
-        const bool is_type3_subtype = is_type3_font_subtype_fitz(subtype);
+        const bool is_type3_subtype = is_type3_font_subtype(subtype);
         const float type3_width_scale = is_type3_subtype ? parse_type3_font_matrix_scale(font_obj) : 1.0f;
         std::string base_font = normalize_pdf_font_name(parse_name_value_after_key(font_obj.dict, "/BaseFont"));
 
@@ -9316,7 +9305,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                             }
                             p = end_ptr;
                             if (is_type3_subtype) {
-                                widths[code] = scale_type3_width_fitz(static_cast<float>(w), type3_width_scale);
+                                widths[code] = scale_type3_width(static_cast<float>(w), type3_width_scale);
                             } else {
                                 const float parsed_width = static_cast<float>(w / 1000.0);
                                 if (parsed_width > 0.0f) {
@@ -9389,10 +9378,14 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
     return out;
 }
 
-Rect WinPdfDocument::get_page_mediabox(int page_idx) {
-    Rect fallback = {0, 0, 595, 842};
+WinPageGeometry WinPdfDocument::get_page_geometry(int page_idx) {
+    WinPageGeometry geo;
+    geo.mediabox = {0, 0, 595, 842};
+    geo.cropbox = {0, 0, 595, 842};
+    geo.rotate = 0;
+    
     if (page_idx < 0 || page_idx >= static_cast<int>(page_ids.size()) || page_ids.empty()) {
-        return fallback;
+        return geo;
     }
 
     auto extract_balanced_array = [&](const std::string& src, size_t arr_start, std::string& out_array) -> bool {
@@ -9435,7 +9428,7 @@ Rect WinPdfDocument::get_page_mediabox(int page_idx) {
 
         int ref_id = 0;
         int ref_gen = 0;
-        if (wz_parse_obj_ref_fitz(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
+        if (wz_parse_obj_ref(dict.c_str() + pos, ref_id, ref_gen) && ref_id > 0) {
             WinPdfObject arr_obj = read_obj(ref_id);
             std::string src = !arr_obj.body.empty() ? arr_obj.body : arr_obj.dict;
             size_t arr_start = src.find('[');
@@ -9478,10 +9471,13 @@ Rect WinPdfDocument::get_page_mediabox(int page_idx) {
         return true;
     };
 
-    Rect crop_box = fallback;
-    Rect media_box = fallback;
+    Rect crop_box = geo.cropbox;
+    Rect media_box = geo.mediabox;
+    int rotate = geo.rotate;
+    
     bool has_crop = false;
     bool has_media = false;
+    bool has_rotate = false;
 
     int node_id = page_ids[page_idx];
     std::unordered_set<int> _visited_nodes;
@@ -9505,20 +9501,33 @@ Rect WinPdfDocument::get_page_mediabox(int page_idx) {
             }
         }
 
-        if (has_crop && has_media) {
+        if (!has_rotate) {
+            int rot = parse_int_after_key(node.dict, "/Rotate", -999);
+            if (rot != -999) {
+                rotate = rot;
+                has_rotate = true;
+            }
+        }
+
+        if (has_crop && has_media && has_rotate) {
             break;
         }
 
         node_id = parse_ref_id_after_key(node.dict, "/Parent");
     }
 
-    if (has_crop) {
-        return crop_box;
-    }
     if (has_media) {
-        return media_box;
+        geo.mediabox = media_box;
     }
-    return fallback;
+    
+    if (has_crop) {
+        geo.cropbox = crop_box;
+    } else {
+        geo.cropbox = geo.mediabox;
+    }
+    
+    geo.rotate = rotate;
+    return geo;
 }
 
 void WinPdfDocument::clear_page_cache() {
@@ -9595,7 +9604,7 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
 
     // Header: đọc trực tiếp từ mmap — chỉ copy cái header nhỏ để parse
     std::string header(fv_data + offset, header_obj_pos + 3 - offset);
-    wz_parse_obj_header_fitz(header.c_str(), obj.id, obj.gen);
+    wz_parse_obj_header(header.c_str(), obj.id, obj.gen);
 
     size_t body_start = header_obj_pos + 3;
     while (body_start < fv_size &&
@@ -9635,7 +9644,7 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
 
             int ref_id = 0;
             int ref_gen = 0;
-            if (wz_parse_obj_ref_fitz(ptr, ref_id, ref_gen) && ref_id > 0 && ref_id != id) {
+            if (wz_parse_obj_ref(ptr, ref_id, ref_gen) && ref_id > 0 && ref_id != id) {
                 WinPdfObject len_obj = read_obj(ref_id);
                 stream_len = parse_first_int(len_obj.body, -1);
             } else {
@@ -9865,7 +9874,7 @@ void WinPdfDocument::parse_xref() {
             return false;
         }
         char* end_ptr = nullptr;
-        long v = wz_strtol_fitz(raw.data() + pos, &end_ptr, 10);
+        long v = wz_strtol(raw.data() + pos, &end_ptr, 10);
         if (end_ptr == raw.data() + pos) {
             return false;
         }
@@ -9881,7 +9890,7 @@ void WinPdfDocument::parse_xref() {
             skip_ws(p);
 
             char* end_ptr = nullptr;
-            long v = wz_strtol_fitz(raw.data() + p, &end_ptr, 10);
+            long v = wz_strtol(raw.data() + p, &end_ptr, 10);
             if (end_ptr != raw.data() + p && v >= 0) {
                 return v;
             }
@@ -9947,7 +9956,7 @@ void WinPdfDocument::parse_xref() {
                     long obj_off = -1;
                     int obj_gen = 0;
                     char in_use = 'f';
-                    if (wz_parse_xref_line_fitz(line.c_str(), obj_off, obj_gen, in_use)) {
+                    if (wz_parse_xref_line(line.c_str(), obj_off, obj_gen, in_use)) {
                         const int obj_id = static_cast<int>(first_obj + i);
                         if (in_use == 'n' && obj_id > 0 && obj_off >= 0) {
                             if (xref.find(obj_id) == xref.end()) {
@@ -10116,7 +10125,7 @@ void WinPdfDocument::parse_xref() {
             std::string header(fv_data + line_start, line_len);
             int obj_id = 0;
             int obj_gen = 0;
-            if (wz_parse_obj_header_fitz(header.c_str(), obj_id, obj_gen) && obj_id > 0) {
+            if (wz_parse_obj_header(header.c_str(), obj_id, obj_gen) && obj_id > 0) {
                 if (xref.find(obj_id) == xref.end()) {
                     xref[obj_id] = line_start;
                 }
@@ -10138,7 +10147,7 @@ int WinPdfDocument::parse_ref_id_after_key(const std::string& dict, const std::s
 
     int id = 0;
     int gen = 0;
-    if (wz_parse_obj_ref_fitz(dict.c_str() + pos, id, gen) && id > 0) {
+    if (wz_parse_obj_ref(dict.c_str() + pos, id, gen) && id > 0) {
         return id;
     }
     return -1;
@@ -10160,7 +10169,7 @@ std::vector<int> WinPdfDocument::parse_ref_array_after_key(const std::string& di
             int gen = 0;
             char r = 0;
             int consumed = 0;
-            if (!wz_parse_xref_line_3_fitz(p, id, gen, r, consumed) || consumed <= 0) {
+            if (!wz_parse_xref_line_3(p, id, gen, r, consumed) || consumed <= 0) {
                 break;
             }
             if (r == 'R' && id > 0) {
@@ -10405,7 +10414,7 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
                     if (gid_to_unicode->find(g) == gid_to_unicode->end()) {
                         char gname[64];
                         if (FT_Get_Glyph_Name(face, g, gname, sizeof(gname)) == 0) {
-                            int cp = glyph_name_to_unicode_fitz(std::string(gname));
+                            int cp = glyph_name_to_unicode(std::string(gname));
                             if (cp > 0) (*gid_to_unicode)[g] = cp;
                         }
                     }
@@ -10484,7 +10493,7 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
             }
         } else {
             auto diff_it = diff_names.find(code);
-            if (diff_it != diff_names.end()) cp = glyph_name_to_unicode_fitz(diff_it->second);
+            if (diff_it != diff_names.end()) cp = glyph_name_to_unicode(diff_it->second);
             if (cp <= 0 && face) {
                 FT_UInt gid = lookup_gid_for_code(code);
                 if (gid > 0) {
