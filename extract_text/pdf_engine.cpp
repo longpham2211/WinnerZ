@@ -7594,9 +7594,6 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
                 if (y_min < desc_min) desc_min = y_min;
             }
         }
-        
-        printf("DEBUG FREETYPE: num_glyphs=%ld, success=%d, got_bounds=%d, asc_max=%.4f, desc_min=%.4f, units=%ld\n", num_glyphs, success_count, got_bounds, asc_max, desc_min, units_per_em);
-
         // Initialize with global font metrics
         if (face->ascender != 0) {
             metrics.ascender = static_cast<float>(face->ascender) / static_cast<float>(units_per_em);
