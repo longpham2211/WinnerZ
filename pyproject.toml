@@ -4,11 +4,11 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "winnerz"
-version = "1.2.12"
+version = "1.2.13"
 description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
 readme = "readme.md"
 authors = [
-    { name = "WinnerZ Contributors", email = "longpham2211@example.com" },
+    { name = "Long Pham", email = "banhkha888@gmail.com" },
 ]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
@@ -22,7 +22,6 @@ classifiers = [
 ]
 dependencies = [
     "pypdfium2",
-    "Pillow"
 ]
 
 [project.urls]
