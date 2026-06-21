@@ -30,7 +30,9 @@
 #include <iostream>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
 #include "../insert_text/insert.hpp"
+#endif
 
 using json = nlohmann::json;
 
@@ -1672,9 +1674,10 @@ PYBIND11_MODULE(winnerz_core, m) {
              py::arg("page_index"),
              py::arg("rects"),
              py::arg("min_overlap_ratio") = 0.0f)
-        .def("insert_text_to_pages_json",
-             [](PyWinDocument& self, const std::string& json_str, const std::string& fonts_dir) {
-                 std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
+         .def("insert_text_to_pages_json",
+              [](PyWinDocument& self, const std::string& json_str, const std::string& fonts_dir) -> py::bytes {
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+                  std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
                  
                  try {
                      json j = json::parse(json_str);
@@ -1738,7 +1741,9 @@ PYBIND11_MODULE(winnerz_core, m) {
                      // Fallback to original bytes if repair fails
                  }
 #endif
-                 return out_bytes;
+#else
+                 throw std::runtime_error("insert_text_to_pages_json is not supported (PDFium not available)");
+#endif
              },
              py::arg("json_str"),
              py::arg("fonts_dir") = "")
