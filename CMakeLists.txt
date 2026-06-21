@@ -81,7 +81,7 @@ else()
     target_compile_definitions(WinnerZ PRIVATE WINNERZ_USE_LCMS2=0)
 endif()
 
-set(PDFIUM_VERSION "6977")
+set(PDFIUM_VERSION "7891")
 
 if(WIN32)
     set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-windows-x64.tgz")
