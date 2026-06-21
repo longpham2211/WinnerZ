@@ -63,7 +63,7 @@ add_library(WinnerZ STATIC
 )
 set_target_properties(WinnerZ PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(WinnerZ PUBLIC cxx_std_17)
-find_package(ZLIB REQUIRED)
+find_package(ZLIB QUIET)
 target_include_directories(WinnerZ PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/extract_text"
@@ -94,10 +94,14 @@ else()
 endif()
 
 if(TARGET freetype)
-    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json freetype harfbuzz harfbuzz-subset ZLIB::ZLIB)
+    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json freetype harfbuzz harfbuzz-subset)
     target_compile_definitions(WinnerZ PRIVATE WINEXTRACT_USE_FREETYPE=1)
 else()
-    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json harfbuzz ZLIB::ZLIB)
+    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json harfbuzz)
+endif()
+
+if(ZLIB_FOUND)
+    target_link_libraries(WinnerZ PUBLIC ZLIB::ZLIB)
 endif()
 
 
