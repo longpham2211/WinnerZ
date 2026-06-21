@@ -84,7 +84,7 @@ endif()
 set(PDFIUM_VERSION "7891")
 
 if(WIN32)
-    set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-windows-x64.tgz")
+    set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-win-x64.tgz")
     set(PDFIUM_LINK_LIB "pdfium.dll.lib")
     set(PDFIUM_SHARED_LIB "bin/pdfium.dll")
 elseif(APPLE)
