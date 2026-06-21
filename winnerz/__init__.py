@@ -51,10 +51,8 @@ _CORE_MODULE = None
 _CORE_MODULE_LOCK = threading.Lock()
 
 _DOC_CACHE_LOCK = threading.Lock()
-_DOC_CACHE_PATH = None
-_DOC_CACHE_SIZE = 0
-_DOC_CACHE_MTIME_NS = 0
-_DOC_CACHE_DOC = None
+_DOC_CACHES = {}  # {path: (size, mtime_ns, doc, last_access_time)}
+_MAX_CACHE_ENTRIES = 10
 
 _PREVIEW_DOC_CACHE_LOCK = threading.Lock()
 _PREVIEW_DOC_CACHE_PATH = None
@@ -310,86 +308,11 @@ def _compute_crop_box_pixels(clip_tuple, page_w, page_h, scale):
 
 
 def _open_preview_pdfium_doc(pdf_path):
-    global _PREVIEW_DOC_CACHE_PATH, _PREVIEW_DOC_CACHE_SIZE, _PREVIEW_DOC_CACHE_MTIME_NS, _PREVIEW_DOC_CACHE_DOC
-
-    try:
-        import pypdfium2 as pdfium
-    except Exception as exc:
-        raise RuntimeError("pypdfium2 backend unavailable") from exc
-
-    sig_size, sig_mtime = _read_file_signature(pdf_path)
-    with _PREVIEW_DOC_CACHE_LOCK:
-        if (
-            _PREVIEW_DOC_CACHE_DOC is not None
-            and _PREVIEW_DOC_CACHE_PATH == pdf_path
-            and _PREVIEW_DOC_CACHE_SIZE == sig_size
-            and _PREVIEW_DOC_CACHE_MTIME_NS == sig_mtime
-        ):
-            return _PREVIEW_DOC_CACHE_DOC
-
-    doc = pdfium.PdfDocument(pdf_path)
-
-    with _PREVIEW_DOC_CACHE_LOCK:
-        old_doc = _PREVIEW_DOC_CACHE_DOC
-        _PREVIEW_DOC_CACHE_PATH = pdf_path
-        _PREVIEW_DOC_CACHE_SIZE = sig_size
-        _PREVIEW_DOC_CACHE_MTIME_NS = sig_mtime
-        _PREVIEW_DOC_CACHE_DOC = doc
-
-    if old_doc is not None and old_doc is not doc:
-        try:
-            old_doc.close()
-        except Exception:
-            pass
-
-    return doc
+    raise RuntimeError("pdfium backend unavailable (handled by C++ core)")
 
 
 def _render_page_with_pdfium(pdf_path, page_index, scale, clip_tuple):
-    with _silence_c_stderr():
-        try:
-            from PIL import Image
-        except Exception as exc:
-            raise RuntimeError(
-                "Pillow is required for pypdfium2 preview backend"
-            ) from exc
-
-        doc = _open_preview_pdfium_doc(pdf_path)
-        page_count = len(doc)
-        if page_index < 0 or page_index >= page_count:
-            raise RuntimeError("page_index out of range")
-
-        page = doc[page_index]
-        try:
-            render_page = getattr(page, "render")
-            bitmap = render_page(scale=float(scale))
-            image = bitmap.to_pil()
-            if image.mode != "RGBA":
-                image = image.convert("RGBA")
-
-            left, top, right, bottom = _compute_crop_box_pixels(
-                clip_tuple,
-                float(image.width) / float(scale),
-                float(image.height) / float(scale),
-                float(scale),
-            )
-
-            image = image.crop((left, top, right, bottom))
-            width, height = image.size
-            rgba = image.tobytes("raw", "RGBA")
-
-            return {
-                "width": int(width),
-                "height": int(height),
-                "channels": 4,
-                "stride": int(width) * 4,
-                "samples": rgba,
-            }
-        finally:
-            try:
-                page.close()
-            except Exception:
-                pass
+    raise RuntimeError("pdfium backend unavailable (handled by C++ core)")
 
 
 def _render_page_with_playwright(pdf_path, page_index, scale, clip_tuple, page_rect):
@@ -581,6 +504,16 @@ class Page:
             return _call_text_json_compat(
                 self.doc._core_doc.get_rawdict, self.index, sort
             )
+        if mode == "json":
+            if hasattr(self.doc._core_doc, "get_json"):
+                return self.doc._core_doc.get_json(self.index, False, sort)
+            import json
+            return json.dumps(self.get_text("dict", sort=sort))
+        if mode == "rawjson":
+            if hasattr(self.doc._core_doc, "get_json"):
+                return self.doc._core_doc.get_json(self.index, True, sort)
+            import json
+            return json.dumps(self.get_text("rawdict", sort=sort))
         if mode == "blocks":
             return _call_text_json_compat(
                 self.doc._core_doc.get_blocks, self.index, sort
@@ -687,138 +620,42 @@ class Page:
         )
 
     def clean_contents(self):
-        import pypdfium2.raw as pdfium_c
-
         pdfium_doc = self.doc._get_pdfium_edit_doc()
-        pdf_page = pdfium_doc[self.index]
-
-        try:
-            for obj in list(pdf_page.get_objects()):
-                pdfium_c.FPDFPage_RemoveObject(pdf_page.raw, obj.raw)
-                try:
-                    obj.close()
-                except Exception:
-                    pass
-            pdf_page.gen_content()
-        finally:
-            pdf_page.close()
+        pdfium_doc.clean_contents(self.index)
 
     def insert_image(self, rect, stream=None):
         pdfium_doc = self.doc._get_pdfium_edit_doc()
-        pdf_page = pdfium_doc[self.index]
-        try:
-            import pypdfium2 as pdfium
+        if stream:
+            import io
+            from PIL import Image
 
-            pdf_img = pdfium.PdfImage.new(pdfium_doc)
+            img = Image.open(io.BytesIO(stream)).convert("RGBA")
+            width, height = img.size
+            rgba = img.tobytes("raw", "RGBA")
+        else:
+            raise ValueError("stream is required")
 
-            if stream:
-                import io
-                from PIL import Image
+        if hasattr(rect, "as_tuple"):
+            x0, y0, x1, y1 = rect.as_tuple()
+        else:
+            x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
 
-                img = Image.open(io.BytesIO(stream)).convert("RGBA")
-                bitmap = pdfium.PdfBitmap.from_pil(img)
-                pdf_img.set_bitmap(bitmap)
-
-            if hasattr(rect, "as_tuple"):
-                x0, y0, x1, y1 = rect.as_tuple()
-            else:
-                x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
-
-            page_w = pdf_page.get_width()
-            page_h = pdf_page.get_height()
-            w = x1 - x0
-            h = y1 - y0
-            rot = pdf_page.get_rotation()
-
-            cropbox = pdf_page.get_cropbox()
-            cb_left, cb_bottom = float(cropbox[0]), float(cropbox[1])
-
-            if rot == 0:
-                m_args = (w, 0, 0, h, x0 + cb_left, page_h - y1 + cb_bottom)
-            elif rot == 90:
-                m_args = (0, w, -h, 0, y1 + cb_left, x0 + cb_bottom)
-            elif rot == 180:
-                m_args = (-w, 0, 0, -h, page_w - x0 + cb_left, y1 + cb_bottom)
-            else:  # rot == 270
-                m_args = (0, -w, h, 0, page_h - y1 + cb_left, page_w - x0 + cb_bottom)
-
-            try:
-                matrix = pdfium.PdfMatrix(*m_args)
-            except AttributeError:
-                matrix = pdfium.pdfium_c.FS_MATRIX(*m_args)
-
-            pdf_img.set_matrix(matrix)
-            pdf_page.insert_obj(pdf_img)
-            pdf_page.gen_content()
-        finally:
-            pdf_page.close()
+        pdfium_doc.insert_image_rgba(self.index, width, height, rgba, [x0, y0, x1, y1])
 
     def show_pdf_page(
         self, rect, doc_src, page_idx, overlay=True, keep_proportion=True
     ):
-        import pypdfium2.raw as pdfium_c
-        import pypdfium2 as pdfium
-
         pdfium_doc = self.doc._get_pdfium_edit_doc()
-        pdf_page = pdfium_doc[self.index]
-
         src_pdfium_doc = doc_src._get_pdfium_edit_doc()
-        src_page = src_pdfium_doc[page_idx]
-        try:
-            src_w, src_h = src_page.get_width(), src_page.get_height()
 
-            xobj = pdfium_c.FPDF_NewXObjectFromPage(
-                pdfium_doc.raw, src_pdfium_doc.raw, page_idx
-            )
-            form_obj = pdfium_c.FPDF_NewFormObjectFromXObject(xobj)
+        if hasattr(rect, "as_tuple"):
+            x0, y0, x1, y1 = rect.as_tuple()
+        else:
+            x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
 
-            if hasattr(rect, "as_tuple"):
-                x0, y0, x1, y1 = rect.as_tuple()
-            else:
-                x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
-
-            target_w = float(x1 - x0)
-            target_h = float(y1 - y0)
-
-            if keep_proportion:
-                scale = min(target_w / float(src_w), target_h / float(src_h))
-                w = float(src_w) * scale
-                h = float(src_h) * scale
-                dx = x0 + (target_w - w) / 2.0
-                dy = y0 + (target_h - h) / 2.0
-            else:
-                w = target_w
-                h = target_h
-                dx = x0
-                dy = y0
-
-            page_w = pdf_page.get_width()
-            page_h = pdf_page.get_height()
-            rot = pdf_page.get_rotation()
-
-            cropbox = pdf_page.get_cropbox()
-            cb_left, cb_bottom = float(cropbox[0]), float(cropbox[1])
-
-            if rot == 0:
-                a, b, c, d, e, f = w, 0, 0, h, dx + cb_left, page_h - dy - h + cb_bottom
-            elif rot == 90:
-                a, b, c, d, e, f = 0, w, -h, 0, dy + h + cb_left, dx + cb_bottom
-            elif rot == 180:
-                a, b, c, d, e, f = -w, 0, 0, -h, page_w - dx + cb_left, dy + h + cb_bottom
-            else:  # rot == 270
-                a, b, c, d, e, f = 0, -w, h, 0, page_h - dy - h + cb_left, page_w - dx + cb_bottom
-
-            a /= float(src_w)
-            b /= float(src_w)
-            c /= float(src_h)
-            d /= float(src_h)
-
-            pdfium_c.FPDFPageObj_Transform(form_obj, a, b, c, d, e, f)
-            pdfium_c.FPDFPage_InsertObject(pdf_page.raw, form_obj)
-            pdf_page.gen_content()
-        finally:
-            src_page.close()
-            pdf_page.close()
+        pdfium_doc.show_pdf_page(
+            self.index, src_pdfium_doc, page_idx, [x0, y0, x1, y1], keep_proportion
+        )
 
 
 class Document:
@@ -826,7 +663,6 @@ class Document:
 
     def __init__(self, path_or_bytes):
         winnerz_core = _load_core()
-        import pypdfium2 as pdfium
 
         if isinstance(path_or_bytes, bytes):
             self.path = "<memory>"
@@ -839,7 +675,10 @@ class Document:
                 path_or_bytes = self._rebuild_with_pdfium_bytes(path_or_bytes)
                 self._core_doc = winnerz_core.Document(path_or_bytes)
 
-            self._pdfium_doc = pdfium.PdfDocument(path_or_bytes)
+            if hasattr(winnerz_core, "PdfiumEditorDoc"):
+                self._pdfium_doc = winnerz_core.PdfiumEditorDoc(path_or_bytes)
+            else:
+                self._pdfium_doc = None
         else:
             self.original_path = path_or_bytes
             self.path = path_or_bytes
@@ -852,15 +691,18 @@ class Document:
                 self._rebuild_with_pdfium(self.path)
                 self._core_doc = winnerz_core.Document(self.path)
 
-            # Khởi tạo pypdfium_doc từ file path
-            self._pdfium_doc = pdfium.PdfDocument(self.path)
+            if hasattr(winnerz_core, "PdfiumEditorDoc"):
+                self._pdfium_doc = winnerz_core.PdfiumEditorDoc(self.path)
+            else:
+                self._pdfium_doc = None
 
         self._page_count = int(self._core_doc.page_count())
         self._pages = [None] * self._page_count
 
     def _rebuild_with_pdfium(self, path):
-        import pypdfium2 as pdfium
         import uuid
+
+        winnerz_core = _load_core()
 
         temp_dir = Path("temp_uploads").resolve()
         temp_dir.mkdir(exist_ok=True)
@@ -869,28 +711,25 @@ class Document:
         import builtins
 
         f = builtins.open(path, "rb")
-        src_doc = pdfium.PdfDocument(f)
-        dst_doc = pdfium.PdfDocument.new()
-        dst_doc.import_pages(src_doc)
-        dst_doc.save(self._temp_decrypted_path)
-        dst_doc.close()
-        src_doc.close()
+        if hasattr(winnerz_core, "PdfiumEditorDoc"):
+            src_doc = winnerz_core.PdfiumEditorDoc(f.read())
+            dst_doc = winnerz_core.PdfiumEditorDoc()
+            dst_doc.import_pages(src_doc, "")
+            dst_doc.save_to_file(self._temp_decrypted_path)
+        else:
+            raise RuntimeError("Cannot decrypt: PdfiumEditorDoc not available")
         f.close()
         self.path = self._temp_decrypted_path
 
     def _rebuild_with_pdfium_bytes(self, raw_bytes):
-        import pypdfium2 as pdfium
-        import io
-
-        src_doc = pdfium.PdfDocument(raw_bytes)
-        dst_doc = pdfium.PdfDocument.new()
-        dst_doc.import_pages(src_doc)
-
-        buf = io.BytesIO()
-        dst_doc.save(buf)
-        dst_doc.close()
-        src_doc.close()
-        return buf.getvalue()
+        winnerz_core = _load_core()
+        if hasattr(winnerz_core, "PdfiumEditorDoc"):
+            src_doc = winnerz_core.PdfiumEditorDoc(raw_bytes)
+            dst_doc = winnerz_core.PdfiumEditorDoc()
+            dst_doc.import_pages(src_doc, "")
+            return dst_doc.save()
+        else:
+            raise RuntimeError("Cannot decrypt bytes: PdfiumEditorDoc not available")
 
     def __getitem__(self, index):
         if index < 0 or index >= self._page_count:
@@ -921,31 +760,71 @@ class Document:
         """
         return self._core_doc.get_all_text()
 
+    def get_all_dicts_json(self, include_chars=False, sort=False):
+        """
+        Extract detailed dict structure (like get_text('dict')) from ALL pages
+        concurrently using C++ threads, returning a single JSON string.
+        This bypasses the Python GIL and is much faster than looping in Python.
+        """
+        if hasattr(self._core_doc, "get_all_dicts_json"):
+            return self._core_doc.get_all_dicts_json(include_chars, sort)
+        raise NotImplementedError("get_all_dicts_json is not supported by the core")
+
+    def insert_text_json(self, json_str, fonts_dir="", progress_cb=None):
+        """
+        Insert text into multiple pages concurrently using C++.
+        Input format: JSON string mapping page_index (int) -> list of tasks.
+        Example:
+            {
+                "0": [
+                    {"text": "Hello", "rect": [10, 10, 100, 30], "size": 12, "color": [255, 0, 0], "font_family": "TimesNewRoman-Bold"}
+                ]
+            }
+        """
+        if hasattr(self._core_doc, "insert_text_to_pages_json"):
+            return self._core_doc.insert_text_to_pages_json(json_str, fonts_dir)
+        if hasattr(self._core_doc, "insert_text_to_pages"):
+            import json
+
+            tasks_dict = json.loads(json_str)
+            return self._core_doc.insert_text_to_pages(tasks_dict, fonts_dir)
+        raise NotImplementedError("insert_text_json is not supported by the core")
+
+    def get_page_font_basenames(self, page_index=0):
+        """
+        Returns a dict mapping PDF resource names (e.g. 'R14') to the real
+        BaseFont name (e.g. 'TimesNewRomanPS-BoldMT') for a given page.
+        Use this to get the true font name when get_text('dict') only gives R14, R16, etc.
+        """
+        if hasattr(self._core_doc, "get_page_font_basenames"):
+            return self._core_doc.get_page_font_basenames(page_index)
+        return {}
+
     def save(self, path):
         with _silence_c_stderr():
             doc = self._get_pdfium_edit_doc()
-            doc.save(path)
+            doc.save_to_file(path)
 
     def tobytes(self):
         with _silence_c_stderr():
             doc = self._get_pdfium_edit_doc()
-            import io
-
-            buf = io.BytesIO()
-            doc.save(buf)
-            return buf.getvalue()
+            return doc.save()
 
     def _get_pdfium_edit_doc(self):
         if not hasattr(self, "_pdfium_edit_doc") or self._pdfium_edit_doc is None:
-            import pypdfium2 as pdfium
-
+            winnerz_core = _load_core()
+            if not hasattr(winnerz_core, "PdfiumEditorDoc"):
+                raise NotImplementedError(
+                    "PdfiumEditorDoc is not built on this platform"
+                )
             if self.path == "<memory>":
                 self._pdfium_edit_doc = self._pdfium_doc
             else:
-                self._pdfium_edit_doc = pdfium.PdfDocument(self.path)
+                self._pdfium_edit_doc = winnerz_core.PdfiumEditorDoc(self.path)
         return self._pdfium_edit_doc
 
     def close(self):
+        self._is_closed = True  # Mark as closed for cache invalidation
         # Dọn sạch các page trước
         for i in range(self._page_count):
             if self._pages[i] is not None:
@@ -958,6 +837,13 @@ class Document:
             except Exception:
                 pass
             self._pdfium_doc = None
+
+        if hasattr(self, "_pdfium_edit_doc") and self._pdfium_edit_doc is not None:
+            try:
+                self._pdfium_edit_doc.close()
+            except Exception:
+                pass
+            self._pdfium_edit_doc = None
 
         # Giải phóng core
         if hasattr(self, "_core_doc"):
@@ -974,12 +860,12 @@ class Document:
     def __del__(self):
         try:
             self.close()
-        except:
+        except Exception:
             pass
 
 
 def open(path_or_bytes):
-    global _DOC_CACHE_PATH, _DOC_CACHE_SIZE, _DOC_CACHE_MTIME_NS, _DOC_CACHE_DOC
+    global _DOC_CACHES
 
     if isinstance(path_or_bytes, bytes):
         return Document(path_or_bytes)
@@ -988,33 +874,40 @@ def open(path_or_bytes):
     size, mtime_ns = _read_file_signature(resolved_path)
 
     with _DOC_CACHE_LOCK:
-        if (
-            _DOC_CACHE_DOC is not None
-            and _DOC_CACHE_PATH == resolved_path
-            and _DOC_CACHE_SIZE == size
-            and _DOC_CACHE_MTIME_NS == mtime_ns
-        ):
-            return _DOC_CACHE_DOC
+        if resolved_path in _DOC_CACHES:
+            c_size, c_mtime, c_doc, _ = _DOC_CACHES[resolved_path]
+            if c_size == size and c_mtime == mtime_ns:
+                if not getattr(c_doc, "_is_closed", False):
+                    _DOC_CACHES[resolved_path] = (c_size, c_mtime, c_doc, time.time())
+                    return c_doc
+                else:
+                    _DOC_CACHES.pop(resolved_path, None)  # Evict stale closed doc
 
     doc = Document(resolved_path)
 
     with _DOC_CACHE_LOCK:
-        old_doc = _DOC_CACHE_DOC
-        _DOC_CACHE_PATH = resolved_path
-        _DOC_CACHE_SIZE = size
-        _DOC_CACHE_MTIME_NS = mtime_ns
-        _DOC_CACHE_DOC = doc
-
-    if old_doc is not None and old_doc is not doc:
-        try:
-            old_doc.close()
-        except Exception:
-            pass
+        _DOC_CACHES[resolved_path] = (size, mtime_ns, doc, time.time())
+        # Tự động dọn dẹp nếu vượt quá 10 file
+        if len(_DOC_CACHES) > _MAX_CACHE_ENTRIES:
+            oldest_path = min(_DOC_CACHES.keys(), key=lambda k: _DOC_CACHES[k][3])
+            old_doc = _DOC_CACHES.pop(oldest_path)[2]
+            try:
+                old_doc.close()
+            except Exception:
+                pass
 
     return doc
+
+def preload_fonts(fonts_dir):
+    """
+    (Legacy Compatibility) 
+    Fonts are cached automatically by the C++ core upon first use.
+    This function exists to prevent AttributeError in old scripts.
+    """
+    pass
 
 
 try:
     _load_core()
-except:
+except Exception:
     pass

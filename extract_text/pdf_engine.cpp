@@ -149,7 +149,12 @@ static bool wz_parse_xref_line_3(const char* p, int& id, int& gen, char& r, int&
 namespace WinExtract {
 
 static std::shared_mutex g_global_freetype_cache_mutex;
-static std::unordered_map<uint64_t, std::shared_ptr<std::unordered_map<unsigned int, int>>> g_global_freetype_cache;
+
+struct CachedFreetypeData {
+    std::shared_ptr<std::unordered_map<unsigned int, int>> gid_to_unicode;
+    std::shared_ptr<std::unordered_map<std::string, unsigned int>> name_to_gid;
+};
+static std::unordered_map<uint64_t, std::shared_ptr<CachedFreetypeData>> g_global_freetype_cache;
 
 
 static uint8_t hex_to_byte(char h1, char h2) {
@@ -3922,7 +3927,7 @@ static void apply_differences_to_map(const std::string& dict, std::map<int, int>
 } // namespace
 
 void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
-                           MuLogicExtractor& extractor,
+                           WinTextExtractor& extractor,
                            const WinFontUnicodeMap& font_unicode_map,
                            const WinFontWidthMap& font_width_map,
                            const WinFontCodeBytesMap& font_code_bytes_map,
@@ -4635,7 +4640,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         auto emit_rune = [&](int rune, float adv, const float in_m[6], bool has_real_glyph, bool preserve_bidi = false) {
             auto dispatch_char = [&](int cp, float char_adv, bool is_primary, bool keep_current_bidi) {
                 if (cp <= 0 || cp > 0x10FFFF) {
-                    cp = 0xFFFD; // Ký tự thay thế
+                    cp = 0xFFFD; 
                 }
 
                 if (!keep_current_bidi) {
@@ -4759,7 +4764,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                         }
                     }
 
-                    // [PATCH 2]: Lọc Unicode rác từ ToUnicode CMap, nhưng giữ lại các ký tự WinAnsi hữu ích.
+                   
                     bool has_invalid = false;
                     for (int& ucs : unicode_seq) {
                         // [FIX]: Remap common WinAnsi characters in the 128-159 range
@@ -4782,7 +4787,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                         }
                     }
                     if (has_invalid) {
-                        unicode_seq.clear(); // ép fallback
+                        unicode_seq.clear();
                     }
                 }
             }
@@ -4791,7 +4796,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
 
             if (unicode_seq.empty()) {
                 unicode_seq.push_back(0xFFFD);
-                cid_fallback = false; // U+FFFD là ký tự hợp lệ, không phải CID fallback
+                cid_fallback = false; 
             } else {
                 cid_fallback = sanitize_unicode_sequence(code, unicode_seq);
             }
@@ -4806,7 +4811,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             item.cid_fallback = cid_fallback;
             glyphs.push_back(std::move(item));
 
-            // [PATCH 1]: Khoảng cách từ (Word Spacing)
             const bool is_word_space = ((consumed == 1 && code == 0x20) || (consumed == 2 && code == 0x0020)) && st.wmode == 0;
             if (st.wmode == 0) {
                 float tx = (glyph_adv * fs + st.char_spacing) * h_scale;
@@ -4827,7 +4831,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
 
         ActualTextState* at = active_actualtext();
         
-        // Nếu không có ActualText, in chữ như bình thường
         if (at == nullptr || at->text.empty()) {
             for (const auto& item : glyphs) {
                 if (item.clipped) continue;
@@ -4845,7 +4848,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         size_t actual_start = 0;
         size_t actual_end = actual_len;
 
-        // 1. Spot a matching prefix (Dò tiền tố trùng khớp)
         for (start = 0; start < glyphs.size(); ++start) {
             if (actual_start >= actual_len || glyphs[start].primary != at->text[actual_start]) {
                 break;
@@ -4860,12 +4862,10 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         }
 
         if (start == glyphs.size()) {
-            // Rút gọn actualtext và thoát
             at->text.erase(at->text.begin(), at->text.begin() + actual_start);
             return;
         }
 
-        // 2. Spot a matching postfix (Dò hậu tố trùng khớp)
         for (end = glyphs.size(); end > start; --end) {
             if (actual_end <= actual_start || glyphs[end - 1].primary != at->text[actual_end - 1]) {
                 break;
@@ -4873,7 +4873,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             actual_end--;
         }
 
-        // 3. Do the difficult bit in the middle (Xử lý phần không khớp ở giữa)
         for (size_t i = start; i < end; ++i) {
             if (glyphs[i].clipped) continue;
 
@@ -4894,12 +4893,10 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             return;
         }
 
-        // 4. Flush remaining actualtext (Xả nốt ActualText thừa giống hàm flush_actualtext)
         if (actual_start < actual_end) {
             float base_m[6] = {1, 0, 0, 1, 0, 0};
             if (end > 0 && end <= glyphs.size()) {
                 copy_matrix(base_m, glyphs[end - 1].m);
-                // Dịch bút (pen) tới cuối ký tự vừa in
                 if (st.wmode == 0) {
                     base_m[4] += glyphs[end - 1].adv * base_m[0];
                     base_m[5] += glyphs[end - 1].adv * base_m[1];
@@ -4909,12 +4906,10 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                 }
             }
             while (actual_start < actual_end) {
-                // Advance = 0 vì đây là các rune bị dồn lại
                 emit_rune(at->text[actual_start++], 0.0f, base_m, false);
             }
         }
 
-        // 5. Send postfix (Đẩy hậu tố ra)
         if (end != glyphs.size()) {
             for (size_t i = end; i < glyphs.size(); ++i) {
                 if (!glyphs[i].clipped) emit_rune(glyphs[i].primary, glyphs[i].adv, glyphs[i].m, true);
@@ -5507,11 +5502,9 @@ std::shared_ptr<WinPdfDocument> WinPdfDocument::open_from_memory(const std::vect
 std::shared_ptr<WinPdfDocument> WinPdfDocument::open(const std::string& path) {
     auto doc = std::make_shared<WinPdfDocument>();
 
-    // ─── ZERO-COPY THẬT SỰ: MappedFile → file_view_ → không vector shim ────────
     doc->mapped_file_ = MappedFile(path);
 
     if (!doc->mapped_file_.ok()) {
-        // Fallback: mmap thất bại (network drive, permission...) → ifstream
 #if defined(_WIN32) || defined(_WIN64)
         int size_w = ::MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
         std::wstring wpath(size_w, 0);
@@ -5532,9 +5525,7 @@ std::shared_ptr<WinPdfDocument> WinPdfDocument::open(const std::string& path) {
         doc->file_view_ = std::string_view(
             reinterpret_cast<const char*>(doc->data_.data()), size);
     } else {
-        // Bình thường: file_view_ trỏ thẳng vào bộ nhớ mmap — ZERO COPY.
         doc->file_view_ = doc->mapped_file_.view();
-        // data_ RỖNG — parse_xref / read_obj_from_offset đọc từ file_view_.
     }
 
     doc->parse_xref();
@@ -6097,6 +6088,166 @@ bool WinPdfDocument::save_multiple_pages_content_incremental(
     return file.good();
 }
 
+int WinPdfDocument::get_max_obj_id() {
+    if (root_id <= 0) {
+        std::string raw(file_view_.data(), file_view_.size());
+        size_t last_trailer = raw.rfind("trailer");
+        if (last_trailer != std::string::npos) {
+            root_id = parse_ref_id_after_key(raw.substr(last_trailer), "/Root");
+        }
+        if (root_id <= 0) root_id = parse_ref_id_after_key(raw, "/Root");
+    }
+    build_objstm_index();
+    int max_obj_id = 0;
+    for (const auto& kv : xref) max_obj_id = (std::max)(max_obj_id, kv.first);
+    for (const auto& kv : objstm_lookup) max_obj_id = (std::max)(max_obj_id, kv.first);
+    for (int pid : page_ids) max_obj_id = (std::max)(max_obj_id, pid);
+    max_obj_id = (std::max)(max_obj_id, root_id);
+    return max_obj_id;
+}
+
+std::vector<uint8_t> WinPdfDocument::save_incremental_update(
+        const std::map<int, std::string>& updated_objects,
+        const std::map<int, std::string>& new_objects) {
+    
+    if (file_view_.empty()) return {};
+    std::string raw(file_view_.data(), file_view_.size());
+
+    auto find_prev_startxref = [&](const std::string& src) -> long {
+        size_t pos = src.rfind("startxref");
+        while (pos != std::string::npos) {
+            size_t p = pos + 9;
+            while (p < src.size() && std::isspace(static_cast<unsigned char>(src[p]))) ++p;
+            char* end_ptr = nullptr;
+            long v = wz_strtol(src.c_str() + p, &end_ptr, 10);
+            if (end_ptr != src.c_str() + p && v >= 0) return v;
+            if (pos == 0) break;
+            pos = src.rfind("startxref", pos - 1);
+        }
+        return -1;
+    };
+
+    if (root_id <= 0) {
+        size_t last_trailer = raw.rfind("trailer");
+        if (last_trailer != std::string::npos) {
+            root_id = parse_ref_id_after_key(raw.substr(last_trailer), "/Root");
+        }
+        if (root_id <= 0) root_id = parse_ref_id_after_key(raw, "/Root");
+    }
+
+    const long prev_startxref = find_prev_startxref(raw);
+    if (prev_startxref < 0 || root_id <= 0) return {};
+
+    std::string out = raw;
+    if (!out.empty() && out.back() != '\n' && out.back() != '\r') out.push_back('\n');
+
+    struct XrefEntry { int id; size_t offset; };
+    std::vector<XrefEntry> changed;
+
+    // Append updated objects
+    for (const auto& kv : updated_objects) {
+        int id = kv.first;
+        const std::string& content = kv.second;
+        changed.push_back({id, out.size()});
+        out += content;
+        if (!content.empty() && content.back() != '\n') out.push_back('\n');
+    }
+
+    // Append new objects
+    int current_max_id = get_max_obj_id();
+    for (const auto& kv : new_objects) {
+        int id = kv.first;
+        const std::string& content = kv.second;
+        changed.push_back({id, out.size()});
+        out += content;
+        if (!content.empty() && content.back() != '\n') out.push_back('\n');
+        current_max_id = (std::max)(current_max_id, id);
+    }
+
+    if (changed.empty()) return {};
+
+    std::sort(changed.begin(), changed.end(), [](const XrefEntry& a, const XrefEntry& b) { return a.id < b.id; });
+
+    const size_t xref_offset = out.size();
+    out += "xref\n";
+    size_t i = 0;
+    while (i < changed.size()) {
+        size_t j = i + 1;
+        while (j < changed.size() && changed[j].id == changed[j - 1].id + 1) ++j;
+        out += std::to_string(changed[i].id) + " " + std::to_string(j - i) + "\n";
+        for (size_t k = i; k < j; ++k) {
+            char entry[64];
+            std::snprintf(entry, sizeof(entry), "%010llu 00000 n \n", static_cast<unsigned long long>(changed[k].offset));
+            out += entry;
+        }
+        i = j;
+    }
+
+    auto extract_trailer_entries = [&](const std::string& src, long startxref_offset) -> std::string {
+        std::string entries;
+        if (startxref_offset < 0 || startxref_offset >= src.size()) return entries;
+        size_t pos = startxref_offset;
+        while (pos < src.size() && std::isspace(static_cast<unsigned char>(src[pos]))) pos++;
+        bool is_stream = false;
+        size_t dict_start = std::string::npos;
+        if (pos + 4 <= src.size() && src.substr(pos, 4) == "xref") {
+            size_t trailer_pos = src.find("trailer", pos);
+            if (trailer_pos != std::string::npos) {
+                dict_start = src.find("<<", trailer_pos);
+            }
+        } else {
+            is_stream = true;
+            dict_start = src.find("<<", pos);
+        }
+        
+        if (dict_start != std::string::npos) {
+            int depth = 0;
+            size_t dict_end = std::string::npos;
+            for (size_t k = dict_start; k < src.size(); k++) {
+                if (src[k] == '<' && k + 1 < src.size() && src[k+1] == '<') { depth++; k++; }
+                else if (src[k] == '>' && k + 1 < src.size() && src[k+1] == '>') {
+                    depth--; k++;
+                    if (depth == 0) { dict_end = k - 1; break; }
+                }
+            }
+            if (dict_end != std::string::npos) {
+                std::string dict_content = src.substr(dict_start + 2, dict_end - dict_start - 2);
+                size_t id_pos = dict_content.find("/ID");
+                if (id_pos != std::string::npos) {
+                    size_t arr_start = dict_content.find("[", id_pos);
+                    if (arr_start != std::string::npos) {
+                        size_t arr_end = dict_content.find("]", arr_start);
+                        if (arr_end != std::string::npos) {
+                            entries += " /ID " + dict_content.substr(arr_start, arr_end - arr_start + 1);
+                        }
+                    }
+                }
+                size_t info_pos = dict_content.find("/Info");
+                if (info_pos != std::string::npos) {
+                    size_t v_start = info_pos + 5;
+                    while (v_start < dict_content.size() && std::isspace(static_cast<unsigned char>(dict_content[v_start]))) v_start++;
+                    size_t r_pos = dict_content.find(" R", v_start);
+                    if (r_pos != std::string::npos) {
+                        entries += " /Info " + dict_content.substr(v_start, r_pos - v_start + 2);
+                    }
+                }
+            }
+        }
+        if (is_stream) {
+            entries += " /XRefStm " + std::to_string(startxref_offset);
+        }
+        return entries;
+    };
+
+    std::string extra_trailer = extract_trailer_entries(raw, prev_startxref);
+    const int size_value = current_max_id + 1;
+    out += "trailer\n<< /Size " + std::to_string(size_value) + " /Root " + std::to_string(root_id) +
+           " 0 R /Prev " + std::to_string(prev_startxref) + extra_trailer + " >>\nstartxref\n" +
+           std::to_string(xref_offset) + "\n%%EOF\n";
+
+    return std::vector<uint8_t>(out.begin(), out.end());
+}
+
 bool WinPdfDocument::save_page_content_incremental(
         int page_idx,
         const std::vector<uint8_t>& decoded_stream,
@@ -6348,6 +6499,45 @@ bool WinPdfDocument::save_page_content_incremental(
     return file.good();
 }
 
+std::vector<uint8_t> WinPdfDocument::get_embedded_font_stream(int font_obj_id) {
+    std::lock_guard<std::recursive_mutex> lock(cache_mutex);
+    
+    // Đọc object Font chính
+    WinPdfObject font_obj = read_obj(font_obj_id);
+    if (font_obj.dict.empty()) return {};
+
+    // Nếu là Type0, lấy DescendantFonts
+    WinPdfObject target_font = font_obj;
+    if (font_obj.dict.find("/Type0") != std::string::npos) {
+        WinPdfObject descendant;
+        if (resolve_type0_descendant_font(font_obj, descendant)) {
+            target_font = descendant;
+        }
+    }
+
+    std::string descriptor_dict;
+    if (!resolve_font_descriptor_dict(target_font, descriptor_dict)) {
+        return {}; 
+    }
+
+    int font_file_id = parse_ref_id_after_key(descriptor_dict, "/FontFile2");
+    if (font_file_id <= 0) {
+        font_file_id = parse_ref_id_after_key(descriptor_dict, "/FontFile3");
+    }
+    if (font_file_id <= 0) {
+        font_file_id = parse_ref_id_after_key(descriptor_dict, "/FontFile"); // Type1
+    }
+
+    if (font_file_id > 0) {
+        WinPdfObject stream_obj = read_obj(font_file_id);
+        if (stream_obj.is_stream && !stream_obj.stream.empty()) {
+            return stream_obj.stream; 
+        }
+    }
+
+    return {};
+}
+
 WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
     std::lock_guard<std::recursive_mutex> lock(cache_mutex);
     WinFontUnicodeMap out;
@@ -6537,7 +6727,6 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                 charcode = FT_Get_Next_Char(face, charcode, &gid);
             }
 
-            // [FIX Identity-H]: Nếu vẫn thiếu, thử dùng Glyph Names
             if (FT_HAS_GLYPH_NAMES(face)) {
                 for (FT_UInt g = 0; g < (FT_UInt)face->num_glyphs; ++g) {
                     if (gid_to_unicode.find(g) == gid_to_unicode.end()) {
@@ -6649,8 +6838,6 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
-        // [Micro-OCR]: Xóa tối ưu hóa thoát sớm ở đây để đảm bảo các font Identity-H bị thiếu ToUnicode
-        // vẫn chạy xuống vòng lặp bên dưới để được quét OCR.
 
         int consecutive_ocr_failures = 0;
 
@@ -7569,12 +7756,10 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
             if (FT_Load_Glyph(face, static_cast<FT_UInt>(gid), LOAD_FLAGS) != 0) continue;
             success_count++;
 
-            // Dùng outline bbox nếu có (vector font) - y chang fz_bound_glyph
             FT_BBox cbox;
             if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE && face->glyph->outline.n_contours > 0) {
                 FT_Outline_Get_CBox(&face->glyph->outline, &cbox);
             } else {
-                // Bitmap glyph: dùng metrics
                 const FT_Glyph_Metrics& gm = face->glyph->metrics;
                 cbox.xMin = gm.horiBearingX;
                 cbox.yMin = gm.horiBearingY - gm.height;
@@ -7629,7 +7814,7 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
         }
 
         WinPdfObject font_obj = read_obj(font_obj_id);
-        const std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFont");
+        const std::string base_font_name = normalize_pdf_font_name(parse_name_value_after_key(font_obj.dict, "/BaseFont"));
         const bool is_type3_subtype = is_type3_font_subtype(parse_name_value_after_key(font_obj.dict, "/Subtype"));
 
         WinFontVerticalMetrics metrics = get_base14_vertical_metrics(base_font_name);
@@ -9569,7 +9754,6 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
     WinPdfObject obj;
     obj.id = id;
 
-    // ─── Zero-copy: đọc trực tiếp từ file_view_ (mmap hoặc fallback vector) ────
     const std::string_view fv = file_view_;
     const size_t fv_size = fv.size();
     const char* fv_data  = fv.data();
@@ -9578,7 +9762,6 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
         return obj;
     }
 
-    // raw là string_view — không copy thêm byte nào
     const std::string_view raw = fv;
 
     auto find_token = [&](const char* token, size_t start_pos, size_t end_pos) -> size_t {
@@ -9599,7 +9782,6 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
         return obj;
     }
 
-    // Header: đọc trực tiếp từ mmap — chỉ copy cái header nhỏ để parse
     std::string header(fv_data + offset, header_obj_pos + 3 - offset);
     wz_parse_obj_header(header.c_str(), obj.id, obj.gen);
 
@@ -9618,7 +9800,6 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
     size_t obj_end = initial_endobj;
     size_t stream_pos = find_token("stream", body_start, initial_endobj);
     if (stream_pos != std::string_view::npos) {
-        // pre_stream: view — zero copy
         const std::string_view pre_stream_sv = raw.substr(body_start, stream_pos - body_start);
         obj.dict = extract_first_dict_fragment(std::string(pre_stream_sv));
 
@@ -9672,7 +9853,6 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
             stream_abs_end <= fv_size) {
             obj.is_stream = true;
             const size_t stream_size = stream_abs_end - stream_abs_start;
-            // stream vẫn phải copy vào vector vì FlateDecode cần mutate buffer
             obj.stream.resize(stream_size);
             if (stream_size > 0) {
                 std::memcpy(obj.stream.data(), fv_data + stream_abs_start, stream_size);
@@ -9689,7 +9869,6 @@ WinPdfObject WinPdfDocument::read_obj_from_offset(int id, size_t offset) {
         obj_end = fv_size;
     }
 
-    // body: copy nhỏ — chỉ đoạn giữa obj...endobj
     obj.body.assign(fv_data + body_start, obj_end - body_start);
     if (obj.dict.empty()) {
         obj.dict = extract_first_dict_fragment(obj.body);
@@ -9856,7 +10035,6 @@ void WinPdfDocument::parse_xref() {
         return;
     }
 
-    // Zero-copy: raw là string_view trỏ thẳng vào mmap — không tốn thêm RAM
     const std::string_view raw = file_view_;
 
     auto skip_ws = [&](size_t& pos) {
@@ -10100,7 +10278,6 @@ void WinPdfDocument::parse_xref() {
 
     // Fallback for damaged PDFs: scan for object headers and fill only missing entries.
     if (xref.empty()) {
-        // Dùng file_view_ (zero-copy) thay vì data vector.
         const char* fv_data = file_view_.data();
         const size_t fv_size = file_view_.size();
         for (size_t i = 1; i + 3 < fv_size; ++i) {
@@ -10374,15 +10551,21 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
 
     uint64_t font_hash = fnv1a_hash_bytes(font_bytes);
     if (!base_font_name.empty()) font_hash ^= fnv1a_hash_string(base_font_name);
-    std::shared_ptr<std::unordered_map<unsigned int, int>> cached_gid_map;
+    std::shared_ptr<CachedFreetypeData> cached_data;
 
     {
         std::shared_lock<std::shared_mutex> lock(g_global_freetype_cache_mutex);
         auto it = g_global_freetype_cache.find(font_hash);
-        if (it != g_global_freetype_cache.end()) cached_gid_map = it->second;
+        if (it != g_global_freetype_cache.end()) cached_data = it->second;
     }
 
-    if (!cached_gid_map) {
+    std::shared_ptr<std::unordered_map<unsigned int, int>> cached_gid_map;
+    std::shared_ptr<std::unordered_map<std::string, unsigned int>> cached_name_map;
+
+    if (cached_data) {
+        cached_gid_map = cached_data->gid_to_unicode;
+        cached_name_map = cached_data->name_to_gid;
+    } else {
         if (!font_bytes.empty()) {
             FT_New_Memory_Face(library, reinterpret_cast<const FT_Byte*>(font_bytes.data()), static_cast<FT_Long>(font_bytes.size()), 0, &face);
         }
@@ -10395,6 +10578,7 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
         if (!face) return;
 
         auto gid_to_unicode = std::make_shared<std::unordered_map<unsigned int, int>>();
+        auto name_to_gid = std::make_shared<std::unordered_map<std::string, unsigned int>>();
 
         auto collect_gid_unicode = [&]() {
             if (face->charmap == nullptr) return;
@@ -10408,10 +10592,12 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
             }
             if (FT_HAS_GLYPH_NAMES(face)) {
                 for (FT_UInt g = 0; g < (FT_UInt)face->num_glyphs; ++g) {
-                    if (gid_to_unicode->find(g) == gid_to_unicode->end()) {
-                        char gname[64];
-                        if (FT_Get_Glyph_Name(face, g, gname, sizeof(gname)) == 0) {
-                            int cp = glyph_name_to_unicode(std::string(gname));
+                    char gname[64];
+                    if (FT_Get_Glyph_Name(face, g, gname, sizeof(gname)) == 0) {
+                        std::string gname_str(gname);
+                        (*name_to_gid)[gname_str] = g;
+                        if (gid_to_unicode->find(g) == gid_to_unicode->end()) {
+                            int cp = glyph_name_to_unicode(gname_str);
                             if (cp > 0) (*gid_to_unicode)[g] = cp;
                         }
                     }
@@ -10433,9 +10619,13 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
         }
 
         cached_gid_map = gid_to_unicode;
+        cached_name_map = name_to_gid;
+        cached_data = std::make_shared<CachedFreetypeData>();
+        cached_data->gid_to_unicode = cached_gid_map;
+        cached_data->name_to_gid = cached_name_map;
         {
             std::unique_lock<std::shared_mutex> lock(g_global_freetype_cache_mutex);
-            g_global_freetype_cache[font_hash] = cached_gid_map;
+            g_global_freetype_cache[font_hash] = cached_data;
         }
     }
 
@@ -10451,17 +10641,16 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
             return 0;
         }
         FT_UInt gid = 0;
-        if (face) {
-            auto diff_it = diff_names.find(code);
-            if (diff_it != diff_names.end() && FT_HAS_GLYPH_NAMES(face)) {
-                gid = FT_Get_Name_Index(face, const_cast<FT_String*>(diff_it->second.c_str()));
-            }
-            if (gid == 0) {
-                char char_name[32];
-                snprintf(char_name, sizeof(char_name), "char%02X", code);
-                gid = FT_Get_Name_Index(face, char_name);
-            }
-            
+        auto diff_it = diff_names.find(code);
+        if (diff_it != diff_names.end() && cached_name_map) {
+            auto it = cached_name_map->find(diff_it->second);
+            if (it != cached_name_map->end()) gid = it->second;
+        }
+        if (gid == 0 && cached_name_map) {
+            char char_name[32];
+            snprintf(char_name, sizeof(char_name), "char%02X", code);
+            auto it = cached_name_map->find(char_name);
+            if (it != cached_name_map->end()) gid = it->second;
         }
         return gid;
     };

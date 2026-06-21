@@ -47,8 +47,6 @@ int glyph_name_to_unicode(std::string name) {
 
     size_t underscore = name.find('_');
     if (underscore != std::string::npos) {
-        // [FIX]: Truncate at underscore like MuPDF encodings.c:121, 
-        // but only if it's not a known ligature starting with 'f'.
         if (name[0] != 'f') {
             name = name.substr(0, underscore);
         }

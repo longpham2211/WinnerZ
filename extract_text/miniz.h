@@ -20,7 +20,7 @@ typedef unsigned long mz_ulong;
 #define MZ_DATA_ERROR (-3)
 #define MZ_PARAM_ERROR (-10000)
 
-// Hàm giải nén 1:1 với MuPDF/Zlib
+
 int mz_uncompress(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char *pSource, mz_ulong source_len);
 
 #ifdef __cplusplus

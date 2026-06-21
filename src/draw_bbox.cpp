@@ -3,7 +3,7 @@
 #include <algorithm>
 
 // ============================================================================
-// CORE STRUCTURES - Simplified from MuPDF
+// CORE STRUCTURES - Simplified
 // ============================================================================
 
 struct fz_irect {
@@ -297,39 +297,3 @@ void example_draw_with_bbox() {
     
     delete[] dest.samples;
 }
-
-// ============================================================================
-// KEY FUNCTIONS SUMMARY
-// ============================================================================
-
-/*
- * QUAN TRỌNG - CÁC HÀM CHÍNH:
- * 
- * 1. fz_intersect_irect() 
- *    - Tính giao của 2 rectangle
- *    - Dùng để clip bbox với scissor
- * 
- * 2. DrawDevice::apply_clip_bbox()
- *    - Áp dụng bbox clipping lên scissor hiện tại
- *    - Giới hạn vùng vẽ
- * 
- * 3. DrawDevice::get_scissor()
- *    - Lấy bbox clipping hiện tại
- * 
- * 4. DrawDevice::is_rect_visible()
- *    - Kiểm tra xem rectangle có giao với bbox không
- *    - Tối ưu: skip vẽ nếu không visible
- * 
- * 5. DrawDevice::clip_rect()
- *    - Clip rectangle với bbox hiện tại
- *    - Trả về phần giao
- * 
- * 6. DrawOperations::fill_*_with_bbox()
- *    - Các hàm vẽ có áp dụng bbox clipping
- *    - Chỉ vẽ trong vùng clip
- * 
- * LOGIC CHÍNH:
- * - Mọi thao tác vẽ đều intersect với scissor (bbox)
- * - Nếu kết quả empty -> skip
- * - Chỉ vẽ trong vùng giao
- */

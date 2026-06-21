@@ -43,3 +43,9 @@ backup-logic.js
 sdk.py
 draft.py
 perfect.py
+cpdf_pagecontentgenerator.cpp
+pdfium/
+old_init.py
+old_wrapper.cpp
+README.old
+a.py

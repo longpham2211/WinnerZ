@@ -168,12 +168,21 @@ public:
     bool save_multiple_pages_content_incremental(
         const std::map<int, std::vector<uint8_t>>& pages_streams,
         const std::string& output_path);
+        
+    int get_max_obj_id();
+    std::vector<uint8_t> save_incremental_update(
+        const std::map<int, std::string>& updated_objects,
+        const std::map<int, std::string>& new_objects);
+        
+    int get_page_id(int page_idx) const { return page_ids[page_idx]; }
     
     void clear_page_cache();
 
     std::map<std::string, int> get_page_font_name_to_id(int page_idx);
     bool patch_font_unicode_map_lazily(int font_obj_id);
     std::shared_ptr<const std::unordered_map<int, WinUnicodeSequence>> get_font_unicode_map_by_id(int font_obj_id);
+    
+    std::vector<uint8_t> get_embedded_font_stream(int font_obj_id);
     
     struct CidToGidMapData {
         bool has_map = false;
@@ -248,7 +257,7 @@ private:
 
 class WinPdfInterpreter {
 public:
-    static void run(const std::vector<uint8_t>& stream, MuLogicExtractor& dev,
+    static void run(const std::vector<uint8_t>& stream, WinTextExtractor& dev,
                    const WinFontUnicodeMap& font_unicode_map = {},
                    const WinFontWidthMap&   font_width_map   = {},
                    const WinFontCodeBytesMap& font_code_bytes_map = {},

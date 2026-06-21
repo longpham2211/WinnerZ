@@ -28,6 +28,11 @@
 #include <pybind11/stl.h>
 #include <future>
 #include <iostream>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include "../insert_text/insert.hpp"
+
+using json = nlohmann::json;
 
 #include "redactor.hpp"
 #include "preview_pdf.hpp"
@@ -547,7 +552,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     std::shared_ptr<const WinExtract::WinFormXObjectMap> form_xobject_map = doc->get_page_form_xobject_map(page_index);
     WinExtract::WinPageGeometry geo = doc->get_page_geometry(page_index);
 
-    WinExtract::MuLogicExtractor dev;
+    WinExtract::WinTextExtractor dev;
     dev.begin_page(geo.mediabox.x1 - geo.mediabox.x0, geo.mediabox.y1 - geo.mediabox.y0);
 
     WinExtract::WinPdfInterpreter::run(
@@ -596,6 +601,113 @@ static std::array<float, 4> LoadPageRect(const std::shared_ptr<WinExtract::WinPd
 
 
 #include <Python.h>
+
+static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, bool include_chars, bool sort_output) {
+    fz_matrix ctm = ComputePageCTM(extracted.geo);
+    std::array<float, 4> crop_arr = {extracted.geo.cropbox.x0, extracted.geo.cropbox.y0, extracted.geo.cropbox.x1, extracted.geo.cropbox.y1};
+    std::array<float, 4> page_bbox = fz_transform_rect(crop_arr, ctm);
+
+    const float width = std::max(0.0f, page_bbox[2] - page_bbox[0]);
+    const float height = std::max(0.0f, page_bbox[3] - page_bbox[1]);
+
+    json out;
+    out["page_num"] = page_index;
+    out["width"] = width;
+    out["height"] = height;
+
+    std::vector<const WinExtract::WinBlock*> sorted_blocks;
+    for (const auto& block : extracted.page.blocks) {
+        sorted_blocks.push_back(&block);
+    }
+    if (sort_output) {
+        std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
+            auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+            auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+            if (ab[3] != bb[3]) return ab[3] < bb[3];
+            if (ab[0] != bb[0]) return ab[0] < bb[0];
+            return false;
+        });
+    }
+
+    json blocks_list = json::array();
+    for (const auto* block_ptr : sorted_blocks) {
+        const auto& block = *block_ptr;
+        json block_dict;
+        block_dict["type"] = block.type == WinExtract::BlockType::TEXT ? 0 : 1;
+
+        const auto block_bbox = fz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
+        block_dict["bbox"] = {block_bbox[0], block_bbox[1], block_bbox[2], block_bbox[3]};
+
+        json lines_list = json::array();
+        for (const auto& line : block.lines) {
+            json line_dict;
+            const auto line_bbox = fz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
+            line_dict["bbox"] = {line_bbox[0], line_bbox[1], line_bbox[2], line_bbox[3]};
+            line_dict["wmode"] = line.wmode;
+
+            std::array<float, 2> t_dir = fz_transform_point(line.dir.x, line.dir.y, ctm);
+            std::array<float, 2> t_orig = fz_transform_point(0, 0, ctm);
+            line_dict["dir"] = {t_dir[0] - t_orig[0], t_dir[1] - t_orig[1]};
+
+            const auto spans = BuildLineSpans(line);
+            json spans_list = json::array();
+            for (const auto& span : spans) {
+                json span_dict;
+                span_dict["text"] = SpanText(span);
+
+                const auto span_bbox = fz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
+                span_dict["bbox"] = {span_bbox[0], span_bbox[1], span_bbox[2], span_bbox[3]};
+
+                std::array<float, 2> origin;
+                if (!span.chars.empty()) {
+                    origin = fz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
+                } else {
+                    origin = fz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
+                }
+                span_dict["origin"] = {origin[0], origin[1]};
+
+                span_dict["font"] = span.font_name;
+                span_dict["size"] = span.font_size;
+                span_dict["ascender"] = span.ascender;
+                span_dict["descender"] = span.descender;
+                span_dict["color"] = span.color;
+                
+                int flags = SpanFlags(span);
+                span_dict["flags"] = flags;
+
+                if (include_chars) {
+                    json chars_list = json::array();
+                    for (const auto* ch : span.chars) {
+                        if (ch == nullptr) continue;
+                        json ch_dict;
+                        ch_dict["c"] = Utf8FromCodepoint(ch->c);
+                        ch_dict["u"] = ch->c;
+                        
+                        const auto ch_origin = fz_transform_point(ch->origin.x, ch->origin.y, ctm);
+                        ch_dict["origin"] = {ch_origin[0], ch_origin[1]};
+                        
+                        const auto q = QuadToBBox(ch->quad);
+                        const auto bbox = fz_transform_rect(q, ctm);
+                        ch_dict["bbox"] = {bbox[0], bbox[1], bbox[2], bbox[3]};
+                        ch_dict["bidi"] = ch->bidi;
+                        ch_dict["wmode"] = span.wmode;
+                        ch_dict["flags"] = flags;
+                        
+                        chars_list.push_back(std::move(ch_dict));
+                    }
+                    span_dict["chars"] = std::move(chars_list);
+                }
+                spans_list.push_back(std::move(span_dict));
+            }
+            line_dict["spans"] = std::move(spans_list);
+            lines_list.push_back(std::move(line_dict));
+        }
+        block_dict["lines"] = std::move(lines_list);
+        blocks_list.push_back(std::move(block_dict));
+    }
+    out["blocks"] = std::move(blocks_list);
+    return out;
+}
 
 static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index, bool include_chars, bool sort_output) {
     fz_matrix ctm = ComputePageCTM(extracted.geo);
@@ -947,12 +1059,12 @@ static std::string ExtractTextPlain(const std::shared_ptr<WinExtract::WinPdfDocu
             }
         }
     }
-    doc->clear_page_cache();
     return text_out;
 }
 
 static py::dict RenderPageToBytes(
     const std::string& pdf_path,
+    const std::vector<uint8_t>& mem_data,
     int page_index,
     float scale,
     py::object clip_obj) {
@@ -969,7 +1081,7 @@ static py::dict RenderPageToBytes(
 
     winnerz::PreviewImage preview;
     std::string error_message;
-    if (!winnerz::RenderPdfPagePreview(pdf_path, page_index, scale, clip_ptr, preview, &error_message)) {
+    if (!winnerz::RenderPdfPagePreview(pdf_path, mem_data, page_index, scale, clip_ptr, preview, &error_message)) {
         throw std::runtime_error("render_page_to_bytes failed: " + error_message);
     }
 
@@ -1050,6 +1162,178 @@ static py::list ExtractDrawingsToPyList(const std::string& pdf_path, int page_in
 
 }  // namespace
 
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+#include "fpdf_edit.h"
+#include "fpdf_save.h"
+#include "fpdf_ppo.h"
+
+class PyPdfiumEditorDoc {
+public:
+    FPDF_DOCUMENT doc = nullptr;
+    std::string mem_data;
+
+    static void InitPdfium() {
+        static std::once_flag pdfium_init_once;
+        std::call_once(pdfium_init_once, []() {
+            FPDF_InitLibrary();
+        });
+    }
+
+    PyPdfiumEditorDoc() {
+        InitPdfium();
+        doc = FPDF_CreateNewDocument();
+    }
+
+    PyPdfiumEditorDoc(const py::bytes& b) {
+        InitPdfium();
+        std::string_view sv = b;
+        mem_data = std::string(sv.data(), sv.size());
+        doc = FPDF_LoadMemDocument64(mem_data.data(), mem_data.size(), "");
+        if (!doc) {
+            throw std::runtime_error("FPDF_LoadMemDocument64 failed");
+        }
+    }
+
+    PyPdfiumEditorDoc(const std::string& path) {
+        InitPdfium();
+        doc = FPDF_LoadDocument(path.c_str(), "");
+        if (!doc) {
+            throw std::runtime_error("FPDF_LoadDocument failed");
+        }
+    }
+
+    ~PyPdfiumEditorDoc() {
+        close();
+    }
+
+    void close() {
+        if (doc) {
+            FPDF_CloseDocument(doc);
+            doc = nullptr;
+        }
+        mem_data.clear();
+    }
+
+    void import_pages(PyPdfiumEditorDoc& src, const std::string& page_range) {
+        if (!doc || !src.doc) throw std::runtime_error("Invalid document");
+        if (!FPDF_ImportPages(doc, src.doc, page_range.empty() ? nullptr : page_range.c_str(), 0)) {
+            throw std::runtime_error("FPDF_ImportPages failed");
+        }
+    }
+
+    struct BufferWriter : public FPDF_FILEWRITE {
+        std::vector<uint8_t> buffer;
+        BufferWriter() {
+            version = 1;
+            WriteBlock = [](FPDF_FILEWRITE* pThis, const void* pData, unsigned long size) -> int {
+                auto* self = static_cast<BufferWriter*>(pThis);
+                const uint8_t* ptr = static_cast<const uint8_t*>(pData);
+                self->buffer.insert(self->buffer.end(), ptr, ptr + size);
+                return 1;
+            };
+        }
+    };
+
+    py::bytes save() {
+        if (!doc) throw std::runtime_error("Invalid document");
+        BufferWriter bw;
+        if (!FPDF_SaveAsCopy(doc, &bw, 0)) {
+            throw std::runtime_error("FPDF_SaveAsCopy failed");
+        }
+        return py::bytes(reinterpret_cast<const char*>(bw.buffer.data()), bw.buffer.size());
+    }
+
+    void save_to_file(const std::string& path) {
+        if (!doc) throw std::runtime_error("Invalid document");
+        BufferWriter bw;
+        if (!FPDF_SaveAsCopy(doc, &bw, 0)) {
+            throw std::runtime_error("FPDF_SaveAsCopy failed");
+        }
+        std::ofstream f(path, std::ios::binary);
+        if (!f) throw std::runtime_error("Cannot open file for writing");
+        f.write(reinterpret_cast<const char*>(bw.buffer.data()), bw.buffer.size());
+    }
+
+    void clean_contents(int page_index) {
+        if (!doc) throw std::runtime_error("Invalid document");
+        FPDF_PAGE page = FPDF_LoadPage(doc, page_index);
+        if (!page) return;
+
+        int num_objs = FPDFPage_CountObjects(page);
+        for (int i = num_objs - 1; i >= 0; --i) {
+            FPDF_PAGEOBJECT obj = FPDFPage_GetObject(page, i);
+            FPDFPage_RemoveObject(page, obj);
+            FPDFPageObj_Destroy(obj);
+        }
+        FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+    }
+
+    void insert_image_rgba(int page_index, int width, int height, const py::bytes& rgba, const std::array<float, 4>& rect) {
+        if (!doc) throw std::runtime_error("Invalid document");
+        FPDF_PAGE page = FPDF_LoadPage(doc, page_index);
+        if (!page) throw std::runtime_error("Failed to load page");
+
+        FPDF_PAGEOBJECT img_obj = FPDFPageObj_NewImageObj(doc);
+        if (!img_obj) {
+            FPDF_ClosePage(page);
+            throw std::runtime_error("Failed to create image object");
+        }
+
+        FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, nullptr, 0);
+        if (!bitmap) {
+            FPDFPageObj_Destroy(img_obj);
+            FPDF_ClosePage(page);
+            throw std::runtime_error("Failed to create bitmap");
+        }
+        
+        std::string_view sv = rgba;
+        if (sv.size() < (size_t)(width * height * 4)) {
+            FPDFBitmap_Destroy(bitmap);
+            FPDFPageObj_Destroy(img_obj);
+            FPDF_ClosePage(page);
+            throw std::runtime_error("RGBA buffer too small");
+        }
+
+        uint8_t* dest = static_cast<uint8_t*>(FPDFBitmap_GetBuffer(bitmap));
+        int stride = FPDFBitmap_GetStride(bitmap);
+        const uint8_t* src = reinterpret_cast<const uint8_t*>(sv.data());
+        
+        for (int y = 0; y < height; ++y) {
+            uint8_t* dst_row = dest + y * stride;
+            const uint8_t* src_row = src + y * width * 4;
+            for (int x = 0; x < width; ++x) {
+                dst_row[x * 4 + 0] = src_row[x * 4 + 2];
+                dst_row[x * 4 + 1] = src_row[x * 4 + 1];
+                dst_row[x * 4 + 2] = src_row[x * 4 + 0];
+                dst_row[x * 4 + 3] = src_row[x * 4 + 3];
+            }
+        }
+
+        if (!FPDFImageObj_SetBitmap(&page, 1, img_obj, bitmap)) {
+            FPDFBitmap_Destroy(bitmap);
+            FPDFPageObj_Destroy(img_obj);
+            FPDF_ClosePage(page);
+            throw std::runtime_error("Failed to set bitmap");
+        }
+        FPDFBitmap_Destroy(bitmap);
+
+        float x0 = rect[0], y0 = rect[1], x1 = rect[2], y1 = rect[3];
+        float w = x1 - x0;
+        float h = y1 - y0;
+        
+        FPDFPageObj_Transform(img_obj, w, 0, 0, h, x0, y0);
+        FPDFPage_InsertObject(page, img_obj);
+        FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+    }
+
+    void show_pdf_page(int dest_page_idx, PyPdfiumEditorDoc& src_doc, int src_page_idx, const std::array<float, 4>& rect, bool keep_proportion) {
+        // Overlay unsupported in FPDF
+    }
+};
+#endif
+
 PYBIND11_MODULE(winnerz_core, m) {
     m.doc() = "WinnerZ Python bridge (Pybind11)";
 
@@ -1067,33 +1351,47 @@ PYBIND11_MODULE(winnerz_core, m) {
              py::arg("page_index") = 0)
         .def("get_text_plain",
              [](PyWinDocument& self, int page_index, bool sort) {
-                 return ExtractTextPlain(self.doc, page_index, sort);
+                 std::string res;
+                 {
+                     py::gil_scoped_release release;
+                     res = ExtractTextPlain(self.doc, page_index, sort);
+                 }
+                 return res;
              },
              py::arg("page_index") = 0,
              py::arg("sort") = false)
         .def("get_dict",
              [](PyWinDocument& self, int page_index, bool sort) {
-                 const ExtractedPage extracted = ExtractTextPage(self.doc, page_index, sort);
+                 ExtractedPage extracted;
+                 {
+                     py::gil_scoped_release release;
+                     extracted = ExtractTextPage(self.doc, page_index, sort);
+                 }
                  auto res = DictToRawPyDict(extracted, page_index, false, sort);
-                 self.doc->clear_page_cache();
                  return res;
              },
              py::arg("page_index") = 0,
              py::arg("sort") = false)
         .def("get_rawdict",
              [](PyWinDocument& self, int page_index, bool sort) {
-                 const ExtractedPage extracted = ExtractTextPage(self.doc, page_index, sort);
+                 ExtractedPage extracted;
+                 {
+                     py::gil_scoped_release release;
+                     extracted = ExtractTextPage(self.doc, page_index, sort);
+                 }
                  auto res = DictToRawPyDict(extracted, page_index, true, sort);
-                 self.doc->clear_page_cache();
                  return res;
              },
              py::arg("page_index") = 0,
              py::arg("sort") = false)
         .def("get_blocks",
              [](PyWinDocument& self, int page_index, bool sort) {
-                 const ExtractedPage extracted = ExtractTextPage(self.doc, page_index, sort);
+                 ExtractedPage extracted;
+                 {
+                     py::gil_scoped_release release;
+                     extracted = ExtractTextPage(self.doc, page_index, sort);
+                 }
                  auto res = BlocksToRawPyList(extracted, sort);
-                 self.doc->clear_page_cache();
                  return res;
              },
              py::arg("page_index") = 0,
@@ -1101,7 +1399,7 @@ PYBIND11_MODULE(winnerz_core, m) {
         .def("extract_text",
              [](PyWinDocument& self, int page_index) {
                  const ExtractedPage extracted = ExtractTextPage(self.doc, page_index);
-                 WinExtract::MuLogicExtractor dev;
+                 WinExtract::WinTextExtractor dev;
                  auto res = dev.get_text(extracted.page);
                  return res;
              },
@@ -1144,10 +1442,63 @@ PYBIND11_MODULE(winnerz_core, m) {
                  return result;
              },
              py::call_guard<py::gil_scoped_release>())
+        .def("get_json",
+             [](PyWinDocument& self, int page_index, bool include_chars, bool sort) {
+                 ExtractedPage extracted;
+                 {
+                     py::gil_scoped_release release;
+                     extracted = ExtractTextPage(self.doc, page_index, sort);
+                 }
+                 json j = ExtractedPageToJson(extracted, page_index, include_chars, sort);
+                 return j.dump();
+             },
+             py::arg("page_index") = 0,
+             py::arg("include_chars") = false,
+             py::arg("sort") = false)
+        .def("get_all_dicts_json",
+             [](PyWinDocument& self, bool include_chars, bool sort) {
+                 int page_count = self.doc->count_pages();
+                 int num_threads = std::thread::hardware_concurrency();
+                 if (num_threads <= 0) num_threads = 4;
+                 if (num_threads > page_count) num_threads = page_count;
+
+                 std::vector<std::string> page_results(page_count);
+                 std::vector<std::thread> threads;
+                 std::atomic<int> current_page{0};
+
+                 std::shared_ptr<WinExtract::WinPdfDocument> shared_doc = self.doc;
+
+                 int actual_threads = std::min(num_threads, page_count);
+                 for (int t = 0; t < actual_threads; ++t) {
+                     threads.emplace_back([shared_doc, page_count, include_chars, sort, &page_results, &current_page]() {
+                         while (true) {
+                             int i = current_page.fetch_add(1);
+                             if (i >= page_count) break;
+                             ExtractedPage extracted = ExtractTextPage(shared_doc, i, sort);
+                             json j = ExtractedPageToJson(extracted, i, include_chars, sort);
+                             page_results[i] = j.dump();
+                         }
+                     });
+                 }
+
+                 for (auto& t : threads) {
+                     if (t.joinable()) t.join();
+                 }
+
+                 std::string result = "[";
+                 for (int i = 0; i < page_count; ++i) {
+                     result += page_results[i];
+                     if (i < page_count - 1) result += ",";
+                 }
+                 result += "]";
+                 return result;
+             },
+             py::arg("include_chars") = false,
+             py::arg("sort") = false,
+             py::call_guard<py::gil_scoped_release>())
         .def("get_drawings",
              [](PyWinDocument& self, int page_index) {
                  auto res = ExtractDrawingsToPyList(self.path, page_index);
-                 self.doc->clear_page_cache();
                  return res;
              },
              py::arg("page_index") = 0)
@@ -1158,29 +1509,59 @@ PYBIND11_MODULE(winnerz_core, m) {
                 float min_overlap_ratio) {
                  (void)min_overlap_ratio;
                  std::map<int, std::vector<uint8_t>> pages_streams;
+                 std::mutex res_mutex;
 
-                 for (const auto& kv : page_rects_map) {
-                     int page_index = kv.first;
-                     ValidatePageIndex(self.doc, page_index);
+                 std::vector<std::pair<int, std::vector<std::array<float, 4>>>> tasks(page_rects_map.begin(), page_rects_map.end());
+                 std::atomic<size_t> current_task{0};
 
-                     std::vector<winnerz::WinRedactZone_TopDown> zones;
-                     zones.reserve(kv.second.size());
-                     for (const auto& r : kv.second) {
-                         winnerz::WinRedactZone_TopDown zone;
-                         zone.rect = {r[0], r[1], r[2], r[3]};
-                         zones.push_back(zone);
+                 int num_threads = std::thread::hardware_concurrency();
+                 if (num_threads <= 0) num_threads = 4;
+                 int actual_threads = std::min((int)num_threads, (int)tasks.size());
+
+                 std::shared_ptr<WinExtract::WinPdfDocument> shared_doc = self.doc;
+                 std::vector<std::thread> threads;
+                 std::vector<uint8_t> out_bytes;
+
+                 {
+                     py::gil_scoped_release release;
+
+                     for (int t = 0; t < actual_threads; ++t) {
+                         threads.emplace_back([&, shared_doc]() {
+                             while (true) {
+                                 size_t i = current_task.fetch_add(1);
+                                 if (i >= tasks.size()) break;
+
+                                 int page_index = tasks[i].first;
+                                 const auto& rects = tasks[i].second;
+
+                                 std::vector<winnerz::WinRedactZone_TopDown> zones;
+                                 zones.reserve(rects.size());
+                                 for (const auto& r : rects) {
+                                     winnerz::WinRedactZone_TopDown zone;
+                                     zone.rect = {r[0], r[1], r[2], r[3]};
+                                     zones.push_back(zone);
+                                 }
+
+                                 fz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
+                                 float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
+                                 const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
+                                     *shared_doc, page_index, zones, ctm_arr);
+
+                                 {
+                                     std::lock_guard<std::mutex> lock(res_mutex);
+                                     pages_streams[page_index] = filtered;
+                                 }
+                             }
+                         });
                      }
 
-                     fz_matrix ctm = ComputePageCTM(self.doc->get_page_geometry(page_index));
-                     float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
-                     const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
-                         *self.doc, page_index, zones, ctm_arr);
-                         
-                     pages_streams[page_index] = filtered;
-                     self.doc->clear_page_cache();
+                     for (auto& th : threads) {
+                         if (th.joinable()) th.join();
+                     }
+
+                     out_bytes = self.doc->save_multiple_pages_content_incremental_to_bytes(pages_streams);
                  }
 
-                 std::vector<uint8_t> out_bytes = self.doc->save_multiple_pages_content_incremental_to_bytes(pages_streams);
                  if (out_bytes.empty()) {
                      throw std::runtime_error("save_multiple_pages_content_incremental_to_bytes failed");
                  }
@@ -1195,29 +1576,58 @@ PYBIND11_MODULE(winnerz_core, m) {
                 float min_overlap_ratio) {
                  (void)min_overlap_ratio;
                  std::map<int, std::vector<uint8_t>> pages_streams;
+                 std::mutex res_mutex;
 
-                 for (const auto& kv : page_rects_map) {
-                     int page_index = kv.first;
-                     ValidatePageIndex(self.doc, page_index);
+                 std::vector<std::pair<int, std::vector<std::array<float, 4>>>> tasks(page_rects_map.begin(), page_rects_map.end());
+                 std::atomic<size_t> current_task{0};
 
-                     std::vector<winnerz::WinRedactZone_TopDown> zones;
-                     zones.reserve(kv.second.size());
-                     for (const auto& r : kv.second) {
-                         winnerz::WinRedactZone_TopDown zone;
-                         zone.rect = {r[0], r[1], r[2], r[3]};
-                         zones.push_back(zone);
+                 int num_threads = std::thread::hardware_concurrency();
+                 if (num_threads <= 0) num_threads = 4;
+                 int actual_threads = std::min((int)num_threads, (int)tasks.size());
+
+                 std::shared_ptr<WinExtract::WinPdfDocument> shared_doc = self.doc;
+                 std::vector<std::thread> threads;
+
+                 {
+                     py::gil_scoped_release release;
+
+                     for (int t = 0; t < actual_threads; ++t) {
+                         threads.emplace_back([&, shared_doc]() {
+                             while (true) {
+                                 size_t i = current_task.fetch_add(1);
+                                 if (i >= tasks.size()) break;
+
+                                 int page_index = tasks[i].first;
+                                 const auto& rects = tasks[i].second;
+
+                                 std::vector<winnerz::WinRedactZone_TopDown> zones;
+                                 zones.reserve(rects.size());
+                                 for (const auto& r : rects) {
+                                     winnerz::WinRedactZone_TopDown zone;
+                                     zone.rect = {r[0], r[1], r[2], r[3]};
+                                     zones.push_back(zone);
+                                 }
+
+                                 fz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
+                                 float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
+                                 const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
+                                     *shared_doc, page_index, zones, ctm_arr);
+
+                                 {
+                                     std::lock_guard<std::mutex> lock(res_mutex);
+                                     pages_streams[page_index] = filtered;
+                                 }
+                             }
+                         });
                      }
 
-                     fz_matrix ctm = ComputePageCTM(self.doc->get_page_geometry(page_index));
-                     float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
-                     const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
-                         *self.doc, page_index, zones, ctm_arr);
-                         
-                     pages_streams[page_index] = filtered;
-                 }
+                     for (auto& th : threads) {
+                         if (th.joinable()) th.join();
+                     }
 
-                 if (!self.doc->save_multiple_pages_content_incremental(pages_streams, output_pdf)) {
-                     throw std::runtime_error("save_multiple_pages_content_incremental failed");
+                     if (!self.doc->save_multiple_pages_content_incremental(pages_streams, output_pdf)) {
+                         throw std::runtime_error("save_multiple_pages_content_incremental failed");
+                     }
                  }
 
                  py::dict out;
@@ -1262,16 +1672,117 @@ PYBIND11_MODULE(winnerz_core, m) {
              py::arg("page_index"),
              py::arg("rects"),
              py::arg("min_overlap_ratio") = 0.0f)
+        .def("insert_text_to_pages_json",
+             [](PyWinDocument& self, const std::string& json_str, const std::string& fonts_dir) {
+                 std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
+                 
+                 try {
+                     json j = json::parse(json_str);
+                     for (auto& item : j.items()) {
+                         std::string page_key = item.key();
+                         auto tasks_array = item.value();
+                         int page_index = std::stoi(page_key);
+                         std::vector<Winnerz::WinInsertTextTask> tasks;
+                         for (auto& task_item : tasks_array) {
+                             Winnerz::WinInsertTextTask task;
+                             task.text = task_item.value("text", "");
+                             auto rect = task_item["rect"];
+                             task.x0 = rect[0].get<double>();
+                             task.y0 = rect[1].get<double>();
+                             task.x1 = rect[2].get<double>();
+                             task.y1 = rect[3].get<double>();
+                             task.font_size = task_item.value("size", 12.0);
+                             auto color = task_item["color"];
+                             task.r = color[0].get<int>();
+                             task.g = color[1].get<int>();
+                             task.b = color[2].get<int>();
+                             task.bold = task_item.value("bold", false);
+                             task.italic = task_item.value("italic", false);
+                             task.multiline = task_item.value("multiline", false);
+                             task.font_family = task_item.value("font_family", "");
+                             tasks.push_back(task);
+                         }
+                         pages_tasks[page_index] = tasks;
+                     }
+                 } catch (const std::exception& e) {
+                     throw std::runtime_error(std::string("JSON parse error: ") + e.what());
+                 }
+
+                 std::vector<uint8_t> merged_bytes;
+                 {
+                     py::gil_scoped_release release;
+                     merged_bytes = Winnerz::InsertTextToMultiplePages(self.doc.get(), pages_tasks, fonts_dir, nullptr, 0);
+                 }
+                 
+                 if (merged_bytes.empty()) {
+                     if (!self.mem_data.empty()) {
+                         return pybind11::bytes(reinterpret_cast<const char*>(self.mem_data.data()), self.mem_data.size());
+                     }
+                     std::ifstream file(self.path, std::ios::binary | std::ios::ate);
+                     std::streamsize size = file.tellg();
+                     file.seekg(0, std::ios::beg);
+                     std::vector<uint8_t> buffer(size);
+                     if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+                         return pybind11::bytes(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+                     }
+                     return pybind11::bytes();
+                 }
+                 
+                 py::bytes out_bytes = pybind11::bytes(reinterpret_cast<const char*>(merged_bytes.data()), merged_bytes.size());
+                 
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+                 try {
+                     PyPdfiumEditorDoc repair_doc(out_bytes);
+                     out_bytes = repair_doc.save();
+                 } catch (...) {
+                     // Fallback to original bytes if repair fails
+                 }
+#endif
+                 return out_bytes;
+             },
+             py::arg("json_str"),
+             py::arg("fonts_dir") = "")
+        .def("get_page_font_basenames",
+             [](PyWinDocument& self, int page_index) -> py::dict {
+                 // Returns {resource_name: base_font_name} for the page
+                 // base_font_name is the real font name (e.g. "TimesNewRoman-Bold")
+                 // resource_name is the PDF internal alias (e.g. "R14")
+                 ValidatePageIndex(self.doc, page_index);
+                 const WinExtract::WinFontVerticalMetricsMap metrics_map =
+                     self.doc->get_page_font_vertical_metrics_map(page_index);
+                 py::dict result;
+                 for (const auto& kv : metrics_map) {
+                     if (!kv.second.base_font.empty()) {
+                         result[py::str(kv.first)] = py::str(kv.second.base_font);
+                     }
+                 }
+                 return result;
+             },
+             py::arg("page_index") = 0)
         .def("render_page",
              [](PyWinDocument& self,
                 int page_index,
                 float scale,
                 py::object clip) {
-                 return RenderPageToBytes(self.path, page_index, scale, clip);
+                 return RenderPageToBytes(self.path, self.mem_data, page_index, scale, clip);
              },
              py::arg("page_index") = 0,
              py::arg("scale") = 1.0f,
              py::arg("clip") = py::none());
+
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+    py::class_<PyPdfiumEditorDoc>(m, "PdfiumEditorDoc")
+        .def(py::init<>())
+        .def(py::init<const py::bytes&>())
+        .def(py::init<const std::string&>())
+        .def("close", &PyPdfiumEditorDoc::close)
+        .def("import_pages", &PyPdfiumEditorDoc::import_pages)
+        .def("save", &PyPdfiumEditorDoc::save)
+        .def("save_to_file", &PyPdfiumEditorDoc::save_to_file)
+        .def("clean_contents", &PyPdfiumEditorDoc::clean_contents)
+        .def("insert_image_rgba", &PyPdfiumEditorDoc::insert_image_rgba)
+        .def("show_pdf_page", &PyPdfiumEditorDoc::show_pdf_page);
+#endif
 }
 
 #else

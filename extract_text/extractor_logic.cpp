@@ -5,7 +5,6 @@
 
 namespace WinExtract {
 
-// --- HẰNG SỐ CHUẨN CỦA MUPDF ---
 constexpr float PARAGRAPH_DIST = 1.5f;
 constexpr float SPACE_DIST = 0.15f;
 constexpr float SPACE_MAX_DIST = 0.8f;
@@ -69,16 +68,16 @@ static void merge_rect(Rect& dst, const Rect& src, bool& has_value) {
     dst.y1 = std::max(dst.y1, src.y1);
 }
 
-MuLogicExtractor::MuLogicExtractor() {
+WinTextExtractor::WinTextExtractor() {
     cur_block = nullptr; cur_line = nullptr;
     last_line = nullptr;
     last_char = ' '; last_bidi = 0; 
     pen = {0, 0}; lag_pen = {0, 0}; start = {0, 0};
     new_obj = true; maybe_bullet = false;
-    dehyphenate = true; // Khởi tạo biến này
+    dehyphenate = true; 
 }
 
-void MuLogicExtractor::begin_page(float width, float height) {
+void WinTextExtractor::begin_page(float width, float height) {
     page.mediabox = {0, 0, width, height};
     page.blocks.clear();
     cur_block = nullptr; cur_line = nullptr;
@@ -88,12 +87,11 @@ void MuLogicExtractor::begin_page(float width, float height) {
     new_obj = true; maybe_bullet = false;
 }
 
-void MuLogicExtractor::hint_new_text_obj() {
+void WinTextExtractor::hint_new_text_obj() {
     new_obj = true;
 }
 
-// BƯỚC 1: Xử lý Ligature & Whitespace y hệt MuPDF
-void MuLogicExtractor::add_char(int unicode, float x, float y, float adv, float matrix[6], 
+void WinTextExtractor::add_char(int unicode, float x, float y, float adv, float matrix[6], 
                   const std::string& font_name, float size, uint32_t color, 
                   bool bold, bool italic, bool serif, bool mono, int wmode, float ascender, float descender, 
                   int bidi_level, bool has_real_glyph) 
@@ -102,14 +100,12 @@ void MuLogicExtractor::add_char(int unicode, float x, float y, float adv, float 
 
     int bidi = (bidi_level >= 0) ? bidi_level : 0;
     
-    // Ánh xạ has_real_glyph sang số nguyên giống MuPDF
     int main_glyph = has_real_glyph ? 1 : -1; 
 
     add_char_imp(unicode, main_glyph, adv, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
 }
 
-// BƯỚC 2: Bộ máy tính toán không gian và gộp Line/Block (TRÁI TIM CỦA MUPDF)
-void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name, 
+void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name, 
                       float size, uint32_t color, bool bold, bool italic, bool serif, bool mono,
                       int wmode, int bidi, bool force_new_line, float ascender, float descender, bool is_synthetic_space) 
 {
@@ -120,7 +116,7 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     Vec2 dir, ndir, p, q, delta;
     float spacing = 0, base_offset = 0;
 
-    bidi = bidi & 1; // Chỉ giữ cờ RTL để dùng bit 2 làm cờ "visual" reordering.
+    bidi = bidi & 1; 
 
     float m_size = matrix_expansion(m);
     if (m_size <= 0.0f) m_size = size;
@@ -140,7 +136,6 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     cur_block = page.blocks.empty() ? nullptr : &page.blocks.back();
     cur_line = cur_block ? (cur_block->lines.empty() ? nullptr : &cur_block->lines.back()) : nullptr;
 
-    // 1. Xử lý ActualText (glyph == -1)
     if (cur_line != nullptr && glyph == -1) {
         WinChar wc;
         wc.c = c; wc.bidi = bidi; wc.origin = pen; wc.size = m_size; 
@@ -158,15 +153,13 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         return; 
     }
 
-    // 2. Kiểm tra ngắt dòng / ngắt đoạn
     if (cur_line == nullptr || cur_line->wmode != wmode || vec_dot(ndir, cur_line->dir) < 0.999f) {
         new_para = true;
         new_line = true;
     } else {
-        // [PHỤC HỒI]: Chặn Fake Bold (PDF in 2 chữ cái đè lên nhau)
         float dist = std::hypot(p.x - lag_pen.x, p.y - lag_pen.y) / m_size;
         if (dist < FAKE_BOLD_MAX_DIST && c == last_char && glyph >= 0) {
-            return; // Bỏ qua không in thêm chữ này nữa
+            return;
         }
 
         delta.x = p.x - pen.x;
@@ -231,16 +224,13 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         else maybe_bullet = plausible_bullet(c);
     }
 
-    // 3. Quy chuẩn lại các non-glyph theo cách của MuPDF
     if (glyph == -2) glyph = -1;
 
-    // Đẩy Space ảo vào dòng nếu phát hiện khoảng cách chữ quá lớn
     if (add_space > 0) {
-        // [SỬA LỖI 1:1]: Không gọi đệ quy. Chèn trực tiếp để lấp đầy khoảng trống từ 'pen' đến 'p'
         WinChar space_char;
         space_char.c = ' ';
         space_char.bidi = bidi;
-        space_char.origin = pen; // Bắt đầu từ đuôi chữ trước
+        space_char.origin = pen; 
         space_char.size = m_size;
         space_char.color = color;
         space_char.is_bold = bold;
@@ -252,14 +242,12 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         space_char.ascender = ascender;
         space_char.descender = descender;
 
-        // Tính toán độ dốc (ascender/descender)
         Vec2 sa = {0, ascender};
         Vec2 sd = {0, descender};
         if (wmode == 1) { sa = {1, 0}; sd = {0, 0}; }
         sa = transform_vec(sa, m);
         sd = transform_vec(sd, m);
 
-        // Kéo dài Bounding Box: Bên trái là 'pen' (chữ trước), bên phải là 'p' (chữ sau)
         space_char.quad.ll = {pen.x + sd.x, pen.y + sd.y};
         space_char.quad.ul = {pen.x + sa.x, pen.y + sa.y};
         space_char.quad.lr = {p.x + sd.x, p.y + sd.y};
@@ -301,8 +289,7 @@ void MuLogicExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     new_obj = false;
 }
 
-// BƯỚC 3: Sắp xếp RTL (Bidi) và tính Bounding Box tổng. Tuyệt đối KHÔNG sort reading order.
-WinPage MuLogicExtractor::finish_page() {
+WinPage WinTextExtractor::finish_page() {
     auto reverse_bidi_span = [](std::vector<WinChar>& chars, size_t start, size_t end) {
         std::reverse(chars.begin() + start, chars.begin() + end);
     };
@@ -314,7 +301,6 @@ WinPage MuLogicExtractor::finish_page() {
             bool line_has_bbox = false;
             bool needs_reorder = false;
 
-            // Tính BBox và lật RTL nếu cần
             for (size_t i = 0; i < line.chars.size(); ++i) {
                 const auto& ch = line.chars[i];
                 Rect ch_bbox = {
@@ -328,7 +314,6 @@ WinPage MuLogicExtractor::finish_page() {
                 if (ch.bidi == 3) needs_reorder = true;
             }
 
-            // Logic reverse_bidi_line y hệt MuPDF
             if (needs_reorder && !line.chars.empty()) {
                 size_t i = 0;
                 while (i < line.chars.size()) {
@@ -349,7 +334,6 @@ WinPage MuLogicExtractor::finish_page() {
         if (!block_has_bbox) block.bbox = {0, 0, 0, 0};
     }
 
-    // Xóa block rỗng
     page.blocks.erase(
         std::remove_if(page.blocks.begin(), page.blocks.end(), 
             [](const WinBlock& b) { return b.lines.empty(); }), 
@@ -358,7 +342,6 @@ WinPage MuLogicExtractor::finish_page() {
     return page;
 }
 
-// Chuyển Unicode sang UTF8
 static void append_utf8_codepoint(std::string& out, int cp) {
     if (cp == 0x2028 || cp == 0x2029) cp = '\n';
     if (cp <= 0 || cp > 0x10FFFF) return;
@@ -378,8 +361,7 @@ static void append_utf8_codepoint(std::string& out, int cp) {
     }
 }
 
-// BƯỚC 4: Lấy text chuẩn chỉnh, xử lý Hyphen (Joined)
-std::string MuLogicExtractor::get_text(const WinPage& p) {
+std::string WinTextExtractor::get_text(const WinPage& p) {
     std::string text_out;
 
     for (size_t b = 0; b < p.blocks.size(); ++b) {
@@ -387,16 +369,13 @@ std::string MuLogicExtractor::get_text(const WinPage& p) {
         for (size_t l = 0; l < block.lines.size(); ++l) {
             const auto& line = block.lines[l];
             
-            // In các ký tự trong dòng
             for (size_t i = 0; i < line.chars.size(); ++i) {
-                // Nếu đây là ký tự cuối của 1 dòng bị Joined (có dấu gạch nối) thì bỏ qua không in
                 if (line.joined && i == line.chars.size() - 1 && is_unicode_hyphen(line.chars[i].c)) {
                     continue; 
                 }
                 append_utf8_codepoint(text_out, line.chars[i].c);
             }
 
-            // Xử lý xuống dòng: Bỏ qua '\n' nếu dòng bị nối (Joined)
             if (l < block.lines.size() - 1) {
                 if (!line.joined) {
                     text_out += "\n";

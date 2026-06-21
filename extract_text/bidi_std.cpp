@@ -1,8 +1,3 @@
-// Extracted from Bidi.cpp - version 26
-
-// Reference implementation for Unicode Bidirectional Algorithm
-
-// Bidi include file
 #include "bidi_imp.hpp"
 
 #include <assert.h>

@@ -9,7 +9,7 @@ struct Vec2 { float x, y; };
 struct Quad { Vec2 ul, ur, ll, lr; };
 struct Rect { float x0, y0, x1, y1; };
 
-// Cấu trúc Char chuẩn của MuPDF (Không dùng Span)
+
 struct WinChar {
     int c;
     int bidi;
@@ -54,9 +54,9 @@ struct WinPage {
     std::vector<WinBlock> blocks;
 };
 
-class MuLogicExtractor {
+class WinTextExtractor {
 public:
-    MuLogicExtractor();
+    WinTextExtractor();
 
     void begin_page(float width, float height);
     void hint_new_text_obj(); // Báo hiệu PDF vừa gọi lệnh BT (Begin Text)

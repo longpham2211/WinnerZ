@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(WinnerZ)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
 if(WIN32)
@@ -20,7 +21,27 @@ if(NOT nlohmann_json_FOUND)
     FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
-# 2. Định nghĩa thư viện chính (self-contained, no PDFium)
+set(WINNERZ_FREETYPE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extract_text/free-type/freetype-2.14.3")
+if(EXISTS "${WINNERZ_FREETYPE_DIR}/CMakeLists.txt")
+    set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+
+    add_subdirectory("${WINNERZ_FREETYPE_DIR}" EXCLUDE_FROM_ALL)
+    if(TARGET freetype)
+        set_target_properties(freetype PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
+endif()
+
+include(FetchContent)
+FetchContent_Declare(
+    harfbuzz
+    URL https://github.com/harfbuzz/harfbuzz/releases/download/8.3.0/harfbuzz-8.3.0.tar.xz
+)
+FetchContent_MakeAvailable(harfbuzz)
+
 add_library(WinnerZ STATIC
     src/redactor.cpp
     src/preview_pdf.cpp
@@ -42,6 +63,7 @@ add_library(WinnerZ STATIC
 )
 set_target_properties(WinnerZ PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(WinnerZ PUBLIC cxx_std_17)
+find_package(ZLIB REQUIRED)
 target_include_directories(WinnerZ PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/extract_text"
@@ -63,7 +85,7 @@ set(WINNERZ_PDFIUM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/pdfium/i
 set(WINNERZ_PDFIUM_LIB "${CMAKE_CURRENT_SOURCE_DIR}/third-party/pdfium/lib/libpdfium.so")
 
 if(UNIX AND NOT APPLE AND EXISTS "${WINNERZ_PDFIUM_INCLUDE_DIR}/fpdfview.h" AND EXISTS "${WINNERZ_PDFIUM_LIB}")
-    target_sources(WinnerZ PRIVATE src/drawing.cpp)
+    target_sources(WinnerZ PRIVATE src/drawing.cpp insert_text/insert.cpp)
     target_include_directories(WinnerZ PUBLIC "${WINNERZ_PDFIUM_INCLUDE_DIR}")
     target_link_libraries(WinnerZ PUBLIC "${WINNERZ_PDFIUM_LIB}")
     target_compile_definitions(WinnerZ PUBLIC WINNERZ_USE_PDFIUM_PREVIEW=1)
@@ -71,25 +93,13 @@ else()
     target_compile_definitions(WinnerZ PUBLIC WINNERZ_USE_PDFIUM_PREVIEW=0)
 endif()
 
-set(WINNERZ_FREETYPE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extract_text/free-type/freetype-2.14.3")
-if(EXISTS "${WINNERZ_FREETYPE_DIR}/CMakeLists.txt")
-    set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
-
-    add_subdirectory("${WINNERZ_FREETYPE_DIR}" EXCLUDE_FROM_ALL)
-    if(TARGET freetype)
-        set_target_properties(freetype PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    endif()
-    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json freetype)
+if(TARGET freetype)
+    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json freetype harfbuzz harfbuzz-subset ZLIB::ZLIB)
     target_compile_definitions(WinnerZ PRIVATE WINEXTRACT_USE_FREETYPE=1)
 else()
-    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json)
+    target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json harfbuzz ZLIB::ZLIB)
 endif()
 
-# 3. Tạo Python wrapper
 
 if(WINNERZ_BUILD_PYTHON_WRAPPER)
     find_package(pybind11 CONFIG QUIET)
@@ -110,6 +120,10 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     )
 
     target_link_libraries(winnerz_core PRIVATE WinnerZ)
+    
+    if(UNIX)
+        target_link_options(winnerz_core PRIVATE "-Wl,--allow-multiple-definition")
+    endif()
 
     if(UNIX AND NOT APPLE)
         set_target_properties(winnerz_core PROPERTIES

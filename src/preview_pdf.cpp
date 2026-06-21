@@ -97,11 +97,12 @@ bool IsPdfiumPreviewEnabled() {
 }
 
 bool RenderPdfPagePreview(const std::string& pdf_path,
-						  int page_index,
-						  float scale,
-						  const std::array<float, 4>* clip,
-						  PreviewImage& out_image,
-						  std::string* error_message) {
+                          const std::vector<uint8_t>& mem_data,
+                          int page_index,
+                          float scale,
+                          const std::array<float, 4>* clip,
+                          PreviewImage& out_image,
+                          std::string* error_message) {
 	out_image = {};
 
 #if !defined(WINNERZ_USE_PDFIUM_PREVIEW) || !WINNERZ_USE_PDFIUM_PREVIEW
@@ -116,7 +117,13 @@ bool RenderPdfPagePreview(const std::string& pdf_path,
 		return SetError(error_message, "FPDF_InitLibrary failed");
 	}
 
-	FPDF_DOCUMENT document = FPDF_LoadDocument(pdf_path.c_str(), nullptr);
+	FPDF_DOCUMENT document = nullptr;
+	if (!mem_data.empty()) {
+		document = FPDF_LoadMemDocument(mem_data.data(), static_cast<int>(mem_data.size()), nullptr);
+	} else {
+		document = FPDF_LoadDocument(pdf_path.c_str(), nullptr);
+	}
+	
 	if (!document) {
 		const unsigned long code = static_cast<unsigned long>(FPDF_GetLastError());
 		std::ostringstream oss;

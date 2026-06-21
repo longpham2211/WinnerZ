@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "winnerz"
-version = "1.2.13"
+version = "1.2.15"
 description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
 readme = "readme.md"
 authors = [
@@ -20,9 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
     "Topic :: Text Processing :: General",
 ]
-dependencies = [
-    "pypdfium2",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/longpham2211/WinnerZ"

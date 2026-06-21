@@ -9,8 +9,6 @@
 #endif
 
 // WINNERZ
-// just demo 
-// standalone
 using namespace WinExtract;
 
 void process_winnerz_engine(const std::string& path) {
@@ -45,7 +43,7 @@ void process_winnerz_engine(const std::string& path) {
         WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(i);
         Rect              mediabox         = doc->get_page_geometry(i).mediabox;
 
-        MuLogicExtractor dev;
+        WinTextExtractor dev;
         dev.begin_page(mediabox.x1 - mediabox.x0, mediabox.y1 - mediabox.y0);
 
         if (std::getenv("WINEXTRACT_DEBUG_STREAM") != nullptr && i == 2) {
@@ -76,7 +74,7 @@ void process_winnerz_engine(const std::string& path) {
         // KẾT QUẢ ĐÃ ĐƯỢC NHÓM LẠI THEO HỆ THỐNG PHÂN CẤP (Fitz SText)
         WinPage structured_page = dev.finish_page();
         std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;
-        MuLogicExtractor::print_to_terminal(structured_page);
+        WinTextExtractor::print_to_terminal(structured_page);
     }
 }
 

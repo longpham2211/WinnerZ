@@ -6,7 +6,7 @@
 
 // File trung gian kết nối PDFium với WinExtract Pipeline
 WinPage extract_structured_text(std::string pdf_path) {
-    WinExtract::MuLogicExtractor extractor;
+    WinExtract::WinTextExtractor extractor;
 
     // TODO: Tích hợp PDFium của bạn để lặp và add_char ở đây
     

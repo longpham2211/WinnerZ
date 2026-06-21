@@ -42,7 +42,7 @@ void process_winnerz_engine(const std::string& path) {
         WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(i);
         Rect              mediabox         = doc->get_page_geometry(i).mediabox;
 
-        MuLogicExtractor dev;
+        WinTextExtractor dev;
         dev.begin_page(mediabox.x1 - mediabox.x0, mediabox.y1 - mediabox.y0);
 
         if (std::getenv("WINEXTRACT_DEBUG_STREAM") != nullptr && i == 2) {
@@ -71,7 +71,7 @@ void process_winnerz_engine(const std::string& path) {
         WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         WinPage structured_page = dev.finish_page();
         std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;
-        MuLogicExtractor::print_to_terminal(structured_page);
+        WinTextExtractor::print_to_terminal(structured_page);
     }
 }
 
