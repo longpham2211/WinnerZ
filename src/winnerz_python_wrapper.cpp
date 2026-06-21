@@ -29,6 +29,7 @@
 #include <future>
 #include <iostream>
 #include <fstream>
+#include <stdexcept>
 #include <nlohmann/json.hpp>
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
 #include "../insert_text/insert.hpp"
@@ -1743,6 +1744,7 @@ PYBIND11_MODULE(winnerz_core, m) {
 #endif
 #else
                  throw std::runtime_error("insert_text_to_pages_json is not supported (PDFium not available)");
+                 return pybind11::bytes();
 #endif
              },
              py::arg("json_str"),
