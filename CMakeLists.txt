@@ -125,7 +125,7 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
 
     target_link_libraries(winnerz_core PRIVATE WinnerZ)
     
-    if(UNIX)
+    if(UNIX AND NOT APPLE)
         target_link_options(winnerz_core PRIVATE "-Wl,--allow-multiple-definition")
     endif()
 
