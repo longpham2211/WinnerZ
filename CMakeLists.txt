@@ -81,17 +81,45 @@ else()
     target_compile_definitions(WinnerZ PRIVATE WINNERZ_USE_LCMS2=0)
 endif()
 
-set(WINNERZ_PDFIUM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/pdfium/include")
-set(WINNERZ_PDFIUM_LIB "${CMAKE_CURRENT_SOURCE_DIR}/third-party/pdfium/lib/libpdfium.so")
+set(PDFIUM_VERSION "6977")
 
-if(UNIX AND NOT APPLE AND EXISTS "${WINNERZ_PDFIUM_INCLUDE_DIR}/fpdfview.h" AND EXISTS "${WINNERZ_PDFIUM_LIB}")
-    target_sources(WinnerZ PRIVATE src/drawing.cpp insert_text/insert.cpp)
-    target_include_directories(WinnerZ PUBLIC "${WINNERZ_PDFIUM_INCLUDE_DIR}")
-    target_link_libraries(WinnerZ PUBLIC "${WINNERZ_PDFIUM_LIB}")
-    target_compile_definitions(WinnerZ PUBLIC WINNERZ_USE_PDFIUM_PREVIEW=1)
+if(WIN32)
+    set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-windows-x64.tgz")
+    set(PDFIUM_LINK_LIB "pdfium.dll.lib")
+    set(PDFIUM_SHARED_LIB "bin/pdfium.dll")
+elseif(APPLE)
+    if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+        set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-mac-arm64.tgz")
+    else()
+        set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-mac-x64.tgz")
+    endif()
+    set(PDFIUM_LINK_LIB "libpdfium.dylib")
+    set(PDFIUM_SHARED_LIB "lib/libpdfium.dylib")
 else()
-    target_compile_definitions(WinnerZ PUBLIC WINNERZ_USE_PDFIUM_PREVIEW=0)
+    set(PDFIUM_URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-linux-x64.tgz")
+    set(PDFIUM_LINK_LIB "libpdfium.so")
+    set(PDFIUM_SHARED_LIB "lib/libpdfium.so")
 endif()
+
+include(FetchContent)
+FetchContent_Declare(
+    pdfium
+    URL ${PDFIUM_URL}
+)
+FetchContent_MakeAvailable(pdfium)
+
+set(WINNERZ_PDFIUM_INCLUDE_DIR "${pdfium_SOURCE_DIR}/include")
+if(WIN32)
+    set(WINNERZ_PDFIUM_LIB "${pdfium_SOURCE_DIR}/lib/${PDFIUM_LINK_LIB}")
+else()
+    set(WINNERZ_PDFIUM_LIB "${pdfium_SOURCE_DIR}/${PDFIUM_SHARED_LIB}")
+endif()
+set(WINNERZ_PDFIUM_SHARED_FILE "${pdfium_SOURCE_DIR}/${PDFIUM_SHARED_LIB}")
+
+target_sources(WinnerZ PRIVATE src/drawing.cpp insert_text/insert.cpp)
+target_include_directories(WinnerZ PUBLIC "${WINNERZ_PDFIUM_INCLUDE_DIR}")
+target_link_libraries(WinnerZ PUBLIC "${WINNERZ_PDFIUM_LIB}")
+target_compile_definitions(WinnerZ PUBLIC WINNERZ_USE_PDFIUM_PREVIEW=1)
 
 if(TARGET freetype)
     target_link_libraries(WinnerZ PUBLIC nlohmann_json::nlohmann_json freetype harfbuzz harfbuzz-subset)
@@ -124,6 +152,12 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     )
 
     target_link_libraries(winnerz_core PRIVATE WinnerZ)
+    
+    add_custom_command(TARGET winnerz_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${WINNERZ_PDFIUM_SHARED_FILE}"
+            "$<TARGET_FILE_DIR:winnerz_core>"
+    )
     
     if(UNIX AND NOT APPLE)
         target_link_options(winnerz_core PRIVATE "-Wl,--allow-multiple-definition")
