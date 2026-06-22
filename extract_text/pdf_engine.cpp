@@ -4674,7 +4674,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             const size_t code_start = bi;
             int code = static_cast<int>(bytes[bi]);
             int consumed = 1;
-
             int max_len = std::min<int>(active_code_bytes, static_cast<int>(bytes.size() - bi));
             if (max_len > 1) {
                 bool matched = false;
@@ -6971,7 +6970,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                     cmap_stream = cmap_obj.stream;
                 }
 
-                cmap = parse_tounicode_cmap_internal(cmap_stream);
+                cmap = parse_tounicode_cmap(cmap_stream);
             }
         }
 
@@ -7259,7 +7258,7 @@ WinFontCodeSpaceMap WinPdfDocument::get_page_font_codespace_map(int page_idx) {
                     cmap_stream = enc_obj.stream;
                 }
                 if (!cmap_stream.empty()) {
-                    ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
+                    ranges = parse_cmap_codespace_ranges(cmap_stream);
                 }
             }
         }
@@ -7285,7 +7284,7 @@ WinFontCodeSpaceMap WinPdfDocument::get_page_font_codespace_map(int page_idx) {
                         cmap_stream = cmap_obj.stream;
                     }
                     if (!cmap_stream.empty()) {
-                        ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
+                        ranges = parse_cmap_codespace_ranges(cmap_stream);
                     }
                 }
             }
@@ -8260,7 +8259,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                     if (cmap_stream.empty()) {
                         cmap_stream = cmap_obj.stream;
                     }
-                    cmap = parse_tounicode_cmap_internal(cmap_stream);
+                    cmap = parse_tounicode_cmap(cmap_stream);
                 }
             }
 
@@ -8380,7 +8379,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                             cmap_stream = enc_obj.stream;
                         }
                         if (!cmap_stream.empty()) {
-                            ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
+                            ranges = parse_cmap_codespace_ranges(cmap_stream);
                         }
                     }
                 }
@@ -8401,7 +8400,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                             cmap_stream = cmap_obj.stream;
                         }
                         if (!cmap_stream.empty()) {
-                            ranges = parse_cmap_codespace_ranges_internal(cmap_stream);
+                            ranges = parse_cmap_codespace_ranges(cmap_stream);
                         }
                     }
                 }
