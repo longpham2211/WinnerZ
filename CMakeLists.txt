@@ -64,6 +64,23 @@ add_library(WinnerZ STATIC
 set_target_properties(WinnerZ PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(WinnerZ PUBLIC cxx_std_17)
 find_package(ZLIB QUIET)
+if(NOT ZLIB_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+        ZLIB
+        URL https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
+    )
+    FetchContent_MakeAvailable(ZLIB)
+    if(TARGET zlibstatic)
+        add_library(ZLIB::ZLIB ALIAS zlibstatic)
+        set(ZLIB_FOUND TRUE)
+        target_include_directories(WinnerZ PUBLIC "${zlib_SOURCE_DIR}" "${zlib_BINARY_DIR}")
+    elseif(TARGET zlib)
+        add_library(ZLIB::ZLIB ALIAS zlib)
+        set(ZLIB_FOUND TRUE)
+        target_include_directories(WinnerZ PUBLIC "${zlib_SOURCE_DIR}" "${zlib_BINARY_DIR}")
+    endif()
+endif()
 target_include_directories(WinnerZ PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/extract_text"
