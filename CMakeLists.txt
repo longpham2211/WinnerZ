@@ -198,5 +198,6 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     install(TARGETS winnerz_core DESTINATION winnerz)
     install(FILES winnerz/__init__.py DESTINATION winnerz)
     install(FILES winnerz/winnerz_core.pyi DESTINATION winnerz)
+    install(FILES "${WINNERZ_PDFIUM_SHARED_FILE}" DESTINATION winnerz)
 endif()
 
