@@ -1742,6 +1742,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                      // Fallback to original bytes if repair fails
                  }
 #endif
+                 return out_bytes;
 #else
                  throw std::runtime_error("insert_text_to_pages_json is not supported (PDFium not available)");
                  return pybind11::bytes();

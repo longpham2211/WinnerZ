@@ -1275,9 +1275,9 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
         for (int i = 0; i < 2; i++) {
             for (auto& slot : font_grid[b][i]) {
                 slot.used_codepoints.clear();
-                slot.subset_data.clear();
-                if (slot.subset_face) { FT_Done_Face(slot.subset_face); slot.subset_face = nullptr; }
                 if (slot.subset_hb_font) { hb_font_destroy(slot.subset_hb_font); slot.subset_hb_font = nullptr; }
+                if (slot.subset_face) { FT_Done_Face(slot.subset_face); slot.subset_face = nullptr; }
+                slot.subset_data.clear();
                 slot.used = false;
             }
         }
