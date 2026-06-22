@@ -108,6 +108,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(pdfium)
 
+if(APPLE)
+    execute_process(COMMAND chmod u+w "${pdfium_SOURCE_DIR}/${PDFIUM_SHARED_LIB}")
+    execute_process(COMMAND install_name_tool -id "@rpath/libpdfium.dylib" "${pdfium_SOURCE_DIR}/${PDFIUM_SHARED_LIB}")
+endif()
+
 set(WINNERZ_PDFIUM_INCLUDE_DIR "${pdfium_SOURCE_DIR}/include")
 if(WIN32)
     set(WINNERZ_PDFIUM_LIB "${pdfium_SOURCE_DIR}/lib/${PDFIUM_LINK_LIB}")
@@ -161,6 +166,17 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     
     if(UNIX AND NOT APPLE)
         target_link_options(winnerz_core PRIVATE "-Wl,--allow-multiple-definition")
+    endif()
+    
+    if(APPLE)
+        set_target_properties(winnerz_core PROPERTIES
+            INSTALL_RPATH "@loader_path"
+            BUILD_RPATH "@loader_path"
+        )
+        add_custom_command(TARGET winnerz_core POST_BUILD
+            COMMAND install_name_tool -change "./libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>"
+            COMMAND install_name_tool -change "libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>"
+        )
     endif()
 
     if(UNIX AND NOT APPLE)
