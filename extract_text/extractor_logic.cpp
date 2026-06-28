@@ -1,5 +1,6 @@
 #include "extractor_logic.hpp"
 #include "ucdn.hpp"
+#include "bidi_imp.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -289,6 +290,19 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     new_obj = false;
 }
 
+struct BidiState {
+    const uint32_t* text_start;
+    std::vector<WinChar>* chars;
+};
+
+static void fz_bidi_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
+    BidiState* state = static_cast<BidiState*>(arg);
+    size_t offset = fragment - state->text_start;
+    for (size_t i = 0; i < fragmentLen; ++i) {
+        (*state->chars)[offset + i].bidi = bidiLevel;
+    }
+}
+
 WinPage WinTextExtractor::finish_page() {
     auto reverse_bidi_span = [](std::vector<WinChar>& chars, size_t start, size_t end) {
         std::reverse(chars.begin() + start, chars.begin() + end);
@@ -300,6 +314,7 @@ WinPage WinTextExtractor::finish_page() {
         for (auto& line : block.lines) {
             bool line_has_bbox = false;
             bool needs_reorder = false;
+            int rtl_count = 0;
 
             for (size_t i = 0; i < line.chars.size(); ++i) {
                 const auto& ch = line.chars[i];
@@ -312,14 +327,53 @@ WinPage WinTextExtractor::finish_page() {
                 merge_rect(line.bbox, ch_bbox, line_has_bbox);
 
                 if (ch.bidi == 3) needs_reorder = true;
+                
+                int bc = ucdn_get_bidi_class(ch.c);
+                if (bc == UCDN_BIDI_CLASS_R || bc == UCDN_BIDI_CLASS_AL || bc == UCDN_BIDI_CLASS_RLE || bc == UCDN_BIDI_CLASS_RLO) {
+                    rtl_count++;
+                }
             }
 
-            if (needs_reorder && !line.chars.empty()) {
+            if (rtl_count > 0 && !line.chars.empty()) {
+                // Ensure visual left-to-right sort before applying UBA
+                std::stable_sort(line.chars.begin(), line.chars.end(), [](const WinChar& a, const WinChar& b) {
+                    return a.quad.ll.x < b.quad.ll.x;
+                });
+
+                std::vector<uint32_t> text(line.chars.size());
+                for (size_t i = 0; i < line.chars.size(); ++i) {
+                    text[i] = line.chars[i].c;
+                }
+                
+                BidiState state = { text.data(), &line.chars };
+                fz_bidi_direction baseDir = FZ_BIDI_UNSET;
+                fz_bidi_fragment_text(nullptr, text.data(), text.size(), &baseDir, fz_bidi_cb, &state, 0);
+
+                int max_level = 0;
+                for (size_t i = 0; i < line.chars.size(); ++i) {
+                    if (line.chars[i].bidi > max_level) max_level = line.chars[i].bidi;
+                }
+
+                while (max_level > 0) {
+                    size_t i = 0;
+                    while (i < line.chars.size()) {
+                        if (line.chars[i].bidi >= max_level) {
+                            size_t j = i + 1;
+                            while (j < line.chars.size() && line.chars[j].bidi >= max_level) j++;
+                            reverse_bidi_span(line.chars, i, j);
+                            i = j;
+                        } else {
+                            i++;
+                        }
+                    }
+                    max_level--;
+                }
+            } else if (needs_reorder && !line.chars.empty()) {
                 size_t i = 0;
                 while (i < line.chars.size()) {
-                    if (line.chars[i].bidi != 0) {
+                    if (line.chars[i].bidi == 3) {
                         size_t j = i + 1;
-                        while (j < line.chars.size() && line.chars[j].bidi != 0) j++;
+                        while (j < line.chars.size() && line.chars[j].bidi == 3) j++;
                         reverse_bidi_span(line.chars, i, j);
                         i = j;
                     } else {

@@ -29,6 +29,9 @@ static std::mutex global_shaping_mutex;
 #include <set>
 #include <unordered_set>
 
+#include "../extract_text/ucdn.hpp"
+#include "../extract_text/bidi_imp.hpp"
+
 namespace Winnerz {
 
 static std::vector<uint32_t> Utf8ToUtf32(const std::string& utf8) {
@@ -74,44 +77,162 @@ struct ShapedLine {
     float width;
 };
 
-static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, hb_font_t* hb_font, float font_size, float max_width) {
-    std::vector<ShapedLine> lines;
+struct LogicalGlyph {
+    uint32_t glyphid;
+    float x_advance;
+    float y_advance;
+    float x_offset;
+    float y_offset;
+    int bidi_level;
+    uint32_t cluster;
+};
+
+struct BidiStateInsert {
+    std::vector<uint32_t>* utf32;
+    std::vector<LogicalGlyph>* logical_glyphs;
+    hb_font_t* hb_font;
+    float scale;
+};
+
+static void fz_bidi_insert_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
+    BidiStateInsert* state = static_cast<BidiStateInsert*>(arg);
+    size_t start = fragment - state->utf32->data();
     
     hb_buffer_t* hb_buffer = hb_buffer_create();
-    hb_buffer_add_utf8(hb_buffer, text.c_str(), -1, 0, -1);
+    hb_buffer_add_utf32(hb_buffer, state->utf32->data(), state->utf32->size(), start, fragmentLen);
     hb_buffer_guess_segment_properties(hb_buffer);
+    hb_buffer_set_direction(hb_buffer, (bidiLevel & 1) ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
     
-    hb_shape(hb_font, hb_buffer, NULL, 0);
+    hb_shape(state->hb_font, hb_buffer, NULL, 0);
     
     unsigned int glyph_count;
     hb_glyph_info_t* glyph_info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
     hb_glyph_position_t* glyph_pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
     
-    float current_width = 0;
-    ShapedLine current_line;
-    int last_space_idx = -1;
-    float width_at_last_space = 0;
+    std::vector<LogicalGlyph> fragment_glyphs;
+    for (unsigned int i = 0; i < glyph_count; ++i) {
+        LogicalGlyph g;
+        g.glyphid = glyph_info[i].codepoint;
+        g.x_advance = glyph_pos[i].x_advance * state->scale;
+        g.y_advance = glyph_pos[i].y_advance * state->scale;
+        g.x_offset = glyph_pos[i].x_offset * state->scale;
+        g.y_offset = glyph_pos[i].y_offset * state->scale;
+        g.bidi_level = bidiLevel;
+        g.cluster = glyph_info[i].cluster;
+        fragment_glyphs.push_back(g);
+    }
+    
+    if (bidiLevel & 1) {
+        std::reverse(fragment_glyphs.begin(), fragment_glyphs.end());
+    }
+    
+    state->logical_glyphs->insert(state->logical_glyphs->end(), fragment_glyphs.begin(), fragment_glyphs.end());
+    hb_buffer_destroy(hb_buffer);
+}
+
+static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, hb_font_t* hb_font, float font_size, float max_width) {
+    std::vector<ShapedLine> lines;
+    if (text.empty()) return lines;
     
     hb_face_t* hb_face = hb_font_get_face(hb_font);
     float upem = hb_face_get_upem(hb_face);
     if (upem == 0.0f) upem = 1000.0f;
     float scale = font_size / (upem * 64.0f);
-    
-    for (unsigned int i = 0; i < glyph_count; ++i) {
-        hb_codepoint_t glyphid = glyph_info[i].codepoint;
-        uint32_t cluster = glyph_info[i].cluster;
-        bool is_space = (cluster < text.size() && text[cluster] == ' ');
-        bool is_newline = (cluster < text.size() && text[cluster] == '\n');
 
-        float x_advance = glyph_pos[i].x_advance * scale;
-        float y_advance = glyph_pos[i].y_advance * scale;
-        float x_offset = glyph_pos[i].x_offset * scale;
-        float y_offset = glyph_pos[i].y_offset * scale;
+    bool has_rtl = false;
+    std::vector<uint32_t> utf32 = Utf8ToUtf32(text);
+    for (uint32_t c : utf32) {
+        int bc = ucdn_get_bidi_class(c);
+        if (bc == UCDN_BIDI_CLASS_R || bc == UCDN_BIDI_CLASS_AL || bc == UCDN_BIDI_CLASS_RLE || bc == UCDN_BIDI_CLASS_RLO) {
+            has_rtl = true;
+            break;
+        }
+    }
+
+    std::vector<LogicalGlyph> logical_glyphs;
+
+    if (!has_rtl) {
+        hb_buffer_t* hb_buffer = hb_buffer_create();
+        hb_buffer_add_utf8(hb_buffer, text.c_str(), -1, 0, -1);
+        hb_buffer_guess_segment_properties(hb_buffer);
+        hb_buffer_set_direction(hb_buffer, HB_DIRECTION_LTR);
+        hb_shape(hb_font, hb_buffer, NULL, 0);
+        
+        unsigned int glyph_count;
+        hb_glyph_info_t* glyph_info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
+        hb_glyph_position_t* glyph_pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
+        
+        for (unsigned int i = 0; i < glyph_count; ++i) {
+            LogicalGlyph g;
+            g.glyphid = glyph_info[i].codepoint;
+            g.x_advance = glyph_pos[i].x_advance * scale;
+            g.y_advance = glyph_pos[i].y_advance * scale;
+            g.x_offset = glyph_pos[i].x_offset * scale;
+            g.y_offset = glyph_pos[i].y_offset * scale;
+            g.bidi_level = 0;
+            g.cluster = glyph_info[i].cluster;
+            logical_glyphs.push_back(g);
+        }
+        hb_buffer_destroy(hb_buffer);
+    } else {
+        BidiStateInsert state;
+        state.utf32 = &utf32;
+        state.logical_glyphs = &logical_glyphs;
+        state.hb_font = hb_font;
+        state.scale = scale;
+        
+        fz_bidi_direction baseDir = FZ_BIDI_UNSET;
+        fz_bidi_fragment_text(nullptr, utf32.data(), utf32.size(), &baseDir, fz_bidi_insert_cb, &state, 0);
+    }
+
+    auto wrap_and_reorder = [&](const std::vector<LogicalGlyph>& line_logical_glyphs, float width) {
+        std::vector<LogicalGlyph> reordered = line_logical_glyphs;
+        int max_level = 0;
+        for (const auto& g : reordered) if (g.bidi_level > max_level) max_level = g.bidi_level;
+        
+        while (max_level > 0) {
+            size_t i = 0;
+            while (i < reordered.size()) {
+                if (reordered[i].bidi_level >= max_level) {
+                    size_t j = i + 1;
+                    while (j < reordered.size() && reordered[j].bidi_level >= max_level) j++;
+                    std::reverse(reordered.begin() + i, reordered.begin() + j);
+                    i = j;
+                } else i++;
+            }
+            max_level--;
+        }
+        
+        ShapedLine sl;
+        sl.width = width;
+        for (const auto& g : reordered) {
+            sl.glyphs.push_back({g.glyphid, g.x_advance, g.y_advance, g.x_offset, g.y_offset});
+        }
+        return sl;
+    };
+
+    float current_width = 0;
+    std::vector<LogicalGlyph> current_line_glyphs;
+    int last_space_idx = -1;
+    float width_at_last_space = 0;
+    
+    for (size_t i = 0; i < logical_glyphs.size(); ++i) {
+        auto& g = logical_glyphs[i];
+        uint32_t cluster = g.cluster;
+        bool is_space = false;
+        bool is_newline = false;
+        
+        if (has_rtl) {
+            is_space = (cluster < utf32.size() && utf32[cluster] == ' ');
+            is_newline = (cluster < utf32.size() && utf32[cluster] == '\n');
+        } else {
+            is_space = (cluster < text.size() && text[cluster] == ' ');
+            is_newline = (cluster < text.size() && text[cluster] == '\n');
+        }
 
         if (is_newline) {
-            current_line.width = current_width;
-            lines.push_back(current_line);
-            current_line = ShapedLine();
+            lines.push_back(wrap_and_reorder(current_line_glyphs, current_width));
+            current_line_glyphs.clear();
             current_width = 0;
             last_space_idx = -1;
             width_at_last_space = 0;
@@ -119,47 +240,44 @@ static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, hb_font
         }
 
         if (is_space) {
-            last_space_idx = static_cast<int>(current_line.glyphs.size());
+            last_space_idx = static_cast<int>(current_line_glyphs.size());
             width_at_last_space = current_width;
         }
         
-        if (current_width + x_advance > max_width && !current_line.glyphs.empty()) {
+        if (current_width + g.x_advance > max_width && !current_line_glyphs.empty()) {
             if (last_space_idx != -1) {
-                ShapedLine next_line;
+                std::vector<LogicalGlyph> next_line_glyphs;
                 float next_width = 0;
-                for (size_t j = last_space_idx + 1; j < current_line.glyphs.size(); ++j) {
-                    next_line.glyphs.push_back(current_line.glyphs[j]);
-                    next_width += current_line.glyphs[j].x_advance;
+                for (size_t j = last_space_idx + 1; j < current_line_glyphs.size(); ++j) {
+                    next_line_glyphs.push_back(current_line_glyphs[j]);
+                    next_width += current_line_glyphs[j].x_advance;
                 }
                 
-                current_line.glyphs.resize(last_space_idx + 1);
-                current_line.width = width_at_last_space + current_line.glyphs.back().x_advance;
-                lines.push_back(current_line);
+                current_line_glyphs.resize(last_space_idx + 1);
+                float line_width = width_at_last_space + current_line_glyphs.back().x_advance;
+                lines.push_back(wrap_and_reorder(current_line_glyphs, line_width));
                 
-                current_line = next_line;
+                current_line_glyphs = std::move(next_line_glyphs);
                 current_width = next_width;
                 last_space_idx = -1;
                 width_at_last_space = 0;
             } else {
-                current_line.width = current_width;
-                lines.push_back(current_line);
-                current_line = ShapedLine();
+                lines.push_back(wrap_and_reorder(current_line_glyphs, current_width));
+                current_line_glyphs.clear();
                 current_width = 0;
                 last_space_idx = -1;
                 width_at_last_space = 0;
             }
         }
         
-        current_line.glyphs.push_back({glyphid, x_advance, y_advance, x_offset, y_offset});
-        current_width += x_advance;
+        current_line_glyphs.push_back(g);
+        current_width += g.x_advance;
     }
     
-    if (!current_line.glyphs.empty()) {
-        current_line.width = current_width;
-        lines.push_back(current_line);
+    if (!current_line_glyphs.empty()) {
+        lines.push_back(wrap_and_reorder(current_line_glyphs, current_width));
     }
     
-    hb_buffer_destroy(hb_buffer);
     return lines;
 }
 
@@ -608,7 +726,7 @@ static void ScanFontsDir(const std::string& fonts_dir, FT_Library library, std::
         slot.has_heavy = (fname_lower.find("heavy") != std::string::npos);
         slot.has_light = (fname_lower.find("light") != std::string::npos);
         slot.has_thin  = (fname_lower.find("thin") != std::string::npos);
-        slot.is_safe_fallback = true; // Kích hoạt Universal Fallback: Bất kỳ font nào cũng có thể làm cứu hộ
+        slot.is_safe_fallback = true;
         slot.is_bold = is_bold;
         slot.is_italic = is_italic;
 
@@ -682,7 +800,6 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
             return {};
         }
         
-        // Dọn dẹp cache cũ nếu có
         for (int b = 0; b < 2; b++) {
             for (int i = 0; i < 2; i++) {
                 g_font_grid[b][i].clear();
@@ -690,29 +807,22 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
             }
         }
         
-        // 1. Ưu tiên scan thư mục fonts_dir của user trước
         if (!fonts_dir.empty()) {
             ScanFontsDir(fonts_dir, g_ft_library, g_font_grid);
         }
 
-        // 2. Nếu user's dir không có gì (hoặc không truyền), fallback sang thư mục fonts/ built-in của package
         bool any_font = false;
         for (int b = 0; b < 2; b++) for (int i = 0; i < 2; i++) if (!g_font_grid[b][i].empty()) any_font = true;
         if (!any_font) {
-            // Tìm thư mục fonts/ nằm cạnh file binary (winnerz package dir)
             namespace fs = std::filesystem;
             std::vector<fs::path> builtin_candidates;
 
-            // Candidate 1: cạnh file .so/.pyd hiện tại (runtime package dir)
-            // Candidate 2-5: relative từ __FILE__ lúc compile (dev environment)
             const char* src_file = __FILE__;
             if (src_file && *src_file) {
                 fs::path src_path(src_file);
-                // insert_text/insert.cpp → đi lên 2 cấp để ra project root → fonts/
                 builtin_candidates.push_back(src_path.parent_path().parent_path() / "fonts");
                 builtin_candidates.push_back(src_path.parent_path().parent_path() / "winnerz" / "fonts");
             }
-            // Relative từ CWD
             builtin_candidates.push_back(fs::path("fonts"));
             builtin_candidates.push_back(fs::path("winnerz") / "fonts");
 
@@ -1224,9 +1334,23 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
 
                     float skew = synth_italic ? 0.2125f : 0.0f;
 
+                    bool is_rtl_line = false;
+                    std::vector<uint32_t> utf32 = Utf8ToUtf32(clean_text);
+                    for (uint32_t c : utf32) {
+                        int bc = ucdn_get_bidi_class(c);
+                        if (bc == UCDN_BIDI_CLASS_R || bc == UCDN_BIDI_CLASS_AL || bc == UCDN_BIDI_CLASS_RLE || bc == UCDN_BIDI_CLASS_RLO) {
+                            is_rtl_line = true;
+                            break;
+                        }
+                    }
+
                     float cur_y_img = baseline_y_img;
                     for (const auto& line : lines) {
                         float cur_x_img = task.x0;
+                        if (is_rtl_line && line.width < bbox_w) {
+                            cur_x_img = task.x1 - line.width;
+                        }
+                        
                         for (const auto& g : line.glyphs) {
                             float xi = cur_x_img + g.x_offset;
                             float yi = cur_y_img + g.y_offset;

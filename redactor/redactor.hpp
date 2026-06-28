@@ -17,6 +17,7 @@ std::vector<uint8_t> WinnerZ_RedactPage(
 	WinExtract::WinPdfDocument& doc,
 	int page_idx,
 	const std::vector<WinRedactZone_TopDown>& zones_topdown,
+	std::map<int, std::vector<uint8_t>>& out_updated_xobjects,
 	const float page_ctm[6] = nullptr);
 
 }  // namespace winnerz

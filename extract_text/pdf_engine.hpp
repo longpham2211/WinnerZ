@@ -121,6 +121,7 @@ struct WinFormXObject {
     std::array<float, 6> matrix = {1, 0, 0, 1, 0, 0};
     bool has_bbox = false;
     std::array<float, 4> bbox = {0, 0, 0, 0};
+    int obj_id = -1;
     std::shared_ptr<std::unordered_map<std::string, WinFormXObject>> children;
 };
 
@@ -164,10 +165,13 @@ public:
                                        const std::vector<uint8_t>& decoded_stream,
                                        const std::string& output_path);
                                        
-    std::vector<uint8_t> save_multiple_pages_content_incremental_to_bytes(const std::map<int, std::vector<uint8_t>>& pages_streams);
+    std::vector<uint8_t> save_multiple_pages_content_incremental_to_bytes(
+        const std::map<int, std::vector<uint8_t>>& pages_streams,
+        const std::map<int, std::vector<uint8_t>>& updated_xobjects = {});
     bool save_multiple_pages_content_incremental(
         const std::map<int, std::vector<uint8_t>>& pages_streams,
-        const std::string& output_path);
+        const std::string& output_path,
+        const std::map<int, std::vector<uint8_t>>& updated_xobjects = {});
         
     int get_max_obj_id();
     std::vector<uint8_t> save_incremental_update(

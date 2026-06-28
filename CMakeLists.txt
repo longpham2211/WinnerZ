@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 project(WinnerZ)
 
+if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "")
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -43,7 +47,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(harfbuzz)
 
 add_library(WinnerZ STATIC
-    src/redactor.cpp
+    redactor/redactor.cpp
     src/preview_pdf.cpp
     extract_text/extractor_logic.cpp
     extract_text/pdf_engine.cpp
@@ -85,6 +89,7 @@ if(NOT ZLIB_FOUND)
     endif()
 endif()
 target_include_directories(WinnerZ PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/redactor"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/extract_text"
 )

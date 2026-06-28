@@ -4195,7 +4195,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
 
         // not absolute RGB 0. Keep that anchor for parity in Separation /Black flows.
         if (cc <= 1e-6f && mm <= 1e-6f && yy <= 1e-6f && kk >= 0.999f) {
-            return (34u << 16) | (31u << 8) | 31u;
+            return (35u << 16) | (31u << 8) | 32u; // 0x231f20 to match MuPDF perfectly
         }
 
         const float r = 1.0f - std::min(1.0f, cc + kk);
@@ -4449,27 +4449,54 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             }
         }
 
-        if ((kind == WinColorSpaceKind::Separation || kind == WinColorSpaceKind::DeviceN) &&
-            active_space.has_tint_transform) {
-            std::vector<float> tint_values;
-            if (evaluate_tint_transform(active_space, comps, tint_values) && !tint_values.empty()) {
-                WinColorSpaceKind tint_kind = active_space.alt_kind;
-                if (tint_kind == WinColorSpaceKind::Unknown) {
-                    const int n = static_cast<int>(tint_values.size());
-                    if (n == 1) {
-                        tint_kind = WinColorSpaceKind::DeviceGray;
-                    } else if (n == 3) {
-                        tint_kind = WinColorSpaceKind::DeviceRGB;
-                    } else if (n >= 4) {
-                        tint_kind = WinColorSpaceKind::DeviceCMYK;
+        if (kind == WinColorSpaceKind::Separation || kind == WinColorSpaceKind::DeviceN) {
+            bool tint_success = false;
+            if (active_space.has_tint_transform) {
+                std::vector<float> tint_values;
+                if (evaluate_tint_transform(active_space, comps, tint_values) && !tint_values.empty()) {
+
+                    WinColorSpaceKind tint_kind = active_space.alt_kind;
+                    if (tint_kind == WinColorSpaceKind::Unknown) {
+                        const int n = static_cast<int>(tint_values.size());
+                        if (n == 1) {
+                            tint_kind = WinColorSpaceKind::DeviceGray;
+                        } else if (n == 3) {
+                            tint_kind = WinColorSpaceKind::DeviceRGB;
+                        } else if (n >= 4) {
+                            tint_kind = WinColorSpaceKind::DeviceCMYK;
+                        }
+                    }
+
+                    WinColorSpaceDef alt_space;
+                    alt_space.kind = tint_kind;
+                    alt_space.component_count = active_space.alt_component_count;
+                    if (alt_space.component_count <= 0) {
+                        alt_space.component_count = static_cast<int>(tint_values.size());
+                    }
+
+                    if (set_color_from_components(tint_kind, tint_values, &alt_space, out_color)) {
+                        tint_success = true;
+                        return true;
+                    }
+                    if (set_color_from_components(active_space.alt_kind, tint_values, &alt_space, out_color)) {
+                        tint_success = true;
+                        return true;
                     }
                 }
+            }
 
-                if (set_color_from_components(tint_kind, tint_values, &active_space, out_color)) {
-                    return true;
-                }
-                if (set_color_from_components(active_space.alt_kind, tint_values, &active_space, out_color)) {
-                    return true;
+            if (!tint_success && !comps.empty()) {
+                // Fallback if tint_transform is unsupported (e.g. Type 4) or missing
+                if (active_space.alt_kind == WinColorSpaceKind::DeviceCMYK && comps.size() == 1) {
+                    std::vector<float> tint_values = {0.0f, 0.0f, 0.0f, comps[0]};
+                    if (set_color_from_components(active_space.alt_kind, tint_values, &active_space, out_color)) {
+                        return true;
+                    }
+                } else if (active_space.alt_kind == WinColorSpaceKind::DeviceGray && comps.size() == 1) {
+                    std::vector<float> tint_values = {1.0f - comps[0]};
+                    if (set_color_from_components(active_space.alt_kind, tint_values, &active_space, out_color)) {
+                        return true;
+                    }
                 }
             }
         }
@@ -5723,7 +5750,8 @@ std::vector<uint8_t> WinPdfDocument::get_page_content(int page_idx) {
 
 
 std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_bytes(
-        const std::map<int, std::vector<uint8_t>>& pages_streams) {
+        const std::map<int, std::vector<uint8_t>>& pages_streams,
+        const std::map<int, std::vector<uint8_t>>& updated_xobjects) {
     if (pages_streams.empty() || page_ids.empty()) {
         return {};
     }
@@ -5876,6 +5904,57 @@ std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_
         changed.push_back({new_stream_id, stream_offset});
     }
 
+    for (const auto& kv : updated_xobjects) {
+        int xobj_id = kv.first;
+        const auto& raw_stream = kv.second;
+
+        WinPdfObject xobj = read_obj(xobj_id);
+        if (xobj.id <= 0 || xobj.dict.empty()) continue;
+
+        // Strip old /Length and /Filter
+        std::string new_dict = xobj.dict;
+        auto remove_key = [&](const std::string& key) {
+            size_t pos = new_dict.find(key);
+            if (pos != std::string::npos) {
+                size_t end_pos = pos + key.size();
+                while (end_pos < new_dict.size() && std::isspace(new_dict[end_pos])) ++end_pos;
+                if (end_pos < new_dict.size() && new_dict[end_pos] == '[') {
+                    int depth = 0;
+                    for (; end_pos < new_dict.size(); ++end_pos) {
+                        if (new_dict[end_pos] == '[') depth++;
+                        else if (new_dict[end_pos] == ']') {
+                            depth--;
+                            if (depth == 0) { end_pos++; break; }
+                        }
+                    }
+                } else {
+                    while (end_pos < new_dict.size() && !std::isspace(new_dict[end_pos]) && new_dict[end_pos] != '/' && new_dict[end_pos] != '>') ++end_pos;
+                }
+                new_dict.erase(pos, end_pos - pos);
+            }
+        };
+        remove_key("/Length");
+        remove_key("/Filter");
+
+        auto compressed = raw_stream; // Uncompressed fallback
+        
+        size_t dict_end = new_dict.rfind(">>");
+        if (dict_end != std::string::npos) {
+            new_dict.insert(dict_end, " /Length " + std::to_string(compressed.size()) + " ");
+        }
+
+        const size_t xobj_offset = out.size();
+        out += std::to_string(xobj.id) + " " + std::to_string(xobj.gen) + " obj\n";
+        out += new_dict;
+        if (new_dict.empty() || (out.back() != '\n' && out.back() != '\r')) out.push_back('\n');
+        out += "stream\n";
+        if (!compressed.empty()) out.append(reinterpret_cast<const char*>(compressed.data()), compressed.size());
+        if (compressed.empty() || (out.back() != '\n' && out.back() != '\r')) out.push_back('\n');
+        out += "endstream\nendobj\n";
+
+        changed.push_back({xobj.id, xobj_offset});
+    }
+
     if (changed.empty()) return {};
 
     std::sort(changed.begin(), changed.end(), [](const XrefEntry& a, const XrefEntry& b) { return a.id < b.id; });
@@ -5903,10 +5982,11 @@ std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_
     return std::vector<uint8_t>(out.begin(), out.end());
 }
 
-
 bool WinPdfDocument::save_multiple_pages_content_incremental(
         const std::map<int, std::vector<uint8_t>>& pages_streams,
-        const std::string& output_path) {
+        const std::string& output_path,
+        const std::map<int, std::vector<uint8_t>>& updated_xobjects) {
+    std::vector<uint8_t> new_data = save_multiple_pages_content_incremental_to_bytes(pages_streams, updated_xobjects);
     if (pages_streams.empty() || page_ids.empty()) {
         return false;
     }
@@ -6501,11 +6581,9 @@ bool WinPdfDocument::save_page_content_incremental(
 std::vector<uint8_t> WinPdfDocument::get_embedded_font_stream(int font_obj_id) {
     std::lock_guard<std::recursive_mutex> lock(cache_mutex);
     
-    // Đọc object Font chính
     WinPdfObject font_obj = read_obj(font_obj_id);
     if (font_obj.dict.empty()) return {};
 
-    // Nếu là Type0, lấy DescendantFonts
     WinPdfObject target_font = font_obj;
     if (font_obj.dict.find("/Type0") != std::string::npos) {
         WinPdfObject descendant;
@@ -8798,6 +8876,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
             }
 
             WinFormXObject form;
+            form.obj_id = xobj_id;
             form.stream_ptr = decoded_ptr;
             form.font_unicode_map = inherited_unicode;
             form.font_width_map = inherited_width;

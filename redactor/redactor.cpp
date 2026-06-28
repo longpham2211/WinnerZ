@@ -129,9 +129,23 @@ static void append_pdf_string(std::string& out, const std::vector<uint8_t>& data
     out += '>';
 }
 
+static void format_pdf_float(char* buf, size_t size, float v) {
+    snprintf(buf, size, "%.9f", v);
+    size_t len = strlen(buf);
+    while (len > 0 && buf[len - 1] == '0') {
+        buf[--len] = '\0';
+    }
+    if (len > 0 && buf[len - 1] == '.') {
+        buf[--len] = '\0';
+    }
+    if (len == 0 || (len == 1 && buf[0] == '-')) {
+        snprintf(buf, size, "0");
+    }
+}
+
 static void append_float(std::string& out, float v) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%g", v);
+    format_pdf_float(buf, sizeof(buf), v);
     out += buf;
 }
 
@@ -615,8 +629,19 @@ static bool is_inline_image_ei_token(const uint8_t* data, size_t i, size_t len) 
     }
 
     const bool prev_ok = (i > 0) && is_whitespace((char)data[i - 1]);
-    const bool next_ok = (i + 2 >= len) || is_whitespace((char)data[i + 2]) || is_delim((char)data[i + 2]);
-    return prev_ok && next_ok;
+    
+    size_t next = i + 2;
+    while (next < len && is_whitespace((char)data[next])) {
+        ++next;
+    }
+    
+    if (next >= len) return true;
+    
+    // In valid PDF, EI is usually followed by Q, EMC, BT, etc.
+    // If it's a binary character (e.g. > 127) it's likely false positive.
+    if (data[next] > 127 || data[next] < 32) return false;
+    
+    return prev_ok;
 }
 
 // Skip the inline-image payload that follows BI and return the position right after EI.
@@ -961,7 +986,7 @@ public:
 
     // Write float number
     void emit_number(double v) {
-        char tmp[32]; snprintf(tmp, sizeof(tmp), "%g", v);
+        char tmp[32]; format_pdf_float(tmp, sizeof(tmp), v);
         buf += ' '; buf += tmp;
     }
 
@@ -1011,6 +1036,7 @@ static std::string run_filter(
     const WinExtract::WinFontMatrixMap& matrix_map,
     const WinExtract::WinFontVerticalMetricsMap& vm,
     std::shared_ptr<const WinExtract::WinFormXObjectMap> xobj_map,
+    std::map<int, std::vector<uint8_t>>* out_updated_xobjects,
     int recursion_depth = 0);
 
 
@@ -1026,10 +1052,11 @@ static std::string run_filter(
         const std::vector<WinRedactZone>& zones,
         const WinExtract::WinFontWidthMap& width_map,
         const WinExtract::WinFontCodeBytesMap& code_bytes_map,
-    const WinExtract::WinFontCodeSpaceMap& codespace_map,
+        const WinExtract::WinFontCodeSpaceMap& codespace_map,
         const WinExtract::WinFontMatrixMap& matrix_map,
         const WinExtract::WinFontVerticalMetricsMap& vm,
         std::shared_ptr<const WinExtract::WinFormXObjectMap> xobj_map,
+        std::map<int, std::vector<uint8_t>>* out_updated_xobjects,
         int recursion_depth) {
 
     WinRedactWriter out;
@@ -1299,7 +1326,7 @@ static std::string run_filter(
                     for (const auto& seg : segs) {
                         if (!arr_content.empty()) arr_content += ' ';
                         if (seg.is_number) {
-                            char tmp[32]; snprintf(tmp, sizeof(tmp), "%g", seg.number);
+                            char tmp[32]; format_pdf_float(tmp, sizeof(tmp), seg.number);
                             arr_content += tmp;
                         } else {
                             append_pdf_string(arr_content, seg.bytes);
@@ -1333,7 +1360,7 @@ static std::string run_filter(
                         for (const auto& seg : segs) {
                             if (!arr_content.empty()) arr_content += ' ';
                             if (seg.is_number) {
-                                char tmp[32]; snprintf(tmp, sizeof(tmp), "%g", seg.number);
+                                char tmp[32]; format_pdf_float(tmp, sizeof(tmp), seg.number);
                                 arr_content += tmp;
                             } else {
                                 append_pdf_string(arr_content, seg.bytes);
@@ -1354,7 +1381,7 @@ static std::string run_filter(
                         }
                         // Pass-through kerning number to output
                         if (!arr_content.empty()) arr_content += ' ';
-                        char tmp[32]; snprintf(tmp, sizeof(tmp), "%g", item.number);
+                        char tmp[32]; format_pdf_float(tmp, sizeof(tmp), item.number);
                         arr_content += tmp;
                     }
                 }
@@ -1386,7 +1413,7 @@ static std::string run_filter(
                     for (const auto& seg : segs) {
                         if (!arr_content.empty()) arr_content += ' ';
                         if (seg.is_number) {
-                            char tmp[32]; snprintf(tmp, sizeof(tmp), "%g", seg.number);
+                            char tmp[32]; format_pdf_float(tmp, sizeof(tmp), seg.number);
                             arr_content += tmp;
                         } else {
                             append_pdf_string(arr_content, seg.bytes);
@@ -1426,7 +1453,7 @@ static std::string run_filter(
                         for (const auto& seg : segs) {
                             if (!arr_content.empty()) arr_content += ' ';
                             if (seg.is_number) {
-                                char tmp[32]; snprintf(tmp, sizeof(tmp), "%g", seg.number);
+                                char tmp[32]; format_pdf_float(tmp, sizeof(tmp), seg.number);
                                 arr_content += tmp;
                             } else {
                                 append_pdf_string(arr_content, seg.bytes);
@@ -1507,29 +1534,19 @@ static std::string run_filter(
                     *xobj.stream_ptr, baked_ctm, zones,
                     merged_width, merged_codebytes, merged_codespace,
                     merged_matrix, merged_vm,
-                    std::make_shared<const WinExtract::WinFormXObjectMap>(merged_xobjs), recursion_depth + 1);
+                    std::make_shared<const WinExtract::WinFormXObjectMap>(merged_xobjs),
+                    out_updated_xobjects,
+                    recursion_depth + 1);
 
-                if (!inner.empty()) {
-                    // Inline result: q [xobj_matrix] cm [bbox] re W n <filtered_content> Q
-                    // Bake matrix into stream
-                    out.write_raw("q\n");
-                    // Emit xobj_matrix as cm operator
-                    char cm_buf[256];
-                    snprintf(cm_buf, sizeof(cm_buf), "%g %g %g %g %g %g cm\n",
-                             xm[0], xm[1], xm[2], xm[3], xm[4], xm[5]);
-                    out.write_raw(cm_buf);
-                    
-                    if (xobj.has_bbox) {
-                        char bbox_buf[256];
-                        snprintf(bbox_buf, sizeof(bbox_buf), "%g %g %g %g re W n\n",
-                                 xobj.bbox[0], xobj.bbox[1], xobj.bbox[2] - xobj.bbox[0], xobj.bbox[3] - xobj.bbox[1]);
-                        out.write_raw(bbox_buf);
-                    }
-                    
-                    out.write_raw(inner);
-                    out.write_raw("\nQ\n");
+                if (out_updated_xobjects && xobj.obj_id > 0) {
+                    (*out_updated_xobjects)[xobj.obj_id] = std::vector<uint8_t>(inner.begin(), inner.end());
                 }
-                // If inner is empty (fully redacted content), drop Do operator entirely
+
+                // IMPORTANT: Emit the original Do operator! Do NOT inline!
+                for (const auto& op2 : operands) {
+                    emit_token(out, op2);
+                }
+                out.emit_op("Do");
             }
             else {
                 // Image XObject or not in map: pass-through
@@ -1596,6 +1613,7 @@ std::vector<uint8_t> WinnerZ_RedactPage(
         WinExtract::WinPdfDocument& doc,
         int page_idx,
         const std::vector<WinRedactZone_TopDown>& zones_topdown,
+        std::map<int, std::vector<uint8_t>>& out_updated_xobjects,
         const float page_ctm[6]) {
 
     // Get page geometry
@@ -1642,7 +1660,7 @@ std::vector<uint8_t> WinnerZ_RedactPage(
     std::string filtered = run_filter(
         raw_stream, default_ctm, pdf_zones,
         width_map, code_bytes_map, codespace_map, matrix_map, vm_map,
-        xobj_map, /*recursion_depth=*/0);
+        xobj_map, &out_updated_xobjects, /*recursion_depth=*/0);
 
     return std::vector<uint8_t>(filtered.begin(), filtered.end());
 }

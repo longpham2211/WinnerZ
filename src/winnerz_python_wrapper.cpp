@@ -1512,6 +1512,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                 float min_overlap_ratio) {
                  (void)min_overlap_ratio;
                  std::map<int, std::vector<uint8_t>> pages_streams;
+                 std::map<int, std::vector<uint8_t>> updated_xobjects;
                  std::mutex res_mutex;
 
                  std::vector<std::pair<int, std::vector<std::array<float, 4>>>> tasks(page_rects_map.begin(), page_rects_map.end());
@@ -1547,12 +1548,16 @@ PYBIND11_MODULE(winnerz_core, m) {
 
                                  fz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
                                  float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
+                                 std::map<int, std::vector<uint8_t>> page_updated_xobjects;
                                  const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
-                                     *shared_doc, page_index, zones, ctm_arr);
+                                     *shared_doc, page_index, zones, page_updated_xobjects, ctm_arr);
 
                                  {
                                      std::lock_guard<std::mutex> lock(res_mutex);
                                      pages_streams[page_index] = filtered;
+                                     for (const auto& kv : page_updated_xobjects) {
+                                         updated_xobjects[kv.first] = kv.second;
+                                     }
                                  }
                              }
                          });
@@ -1562,7 +1567,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                          if (th.joinable()) th.join();
                      }
 
-                     out_bytes = self.doc->save_multiple_pages_content_incremental_to_bytes(pages_streams);
+                     out_bytes = self.doc->save_multiple_pages_content_incremental_to_bytes(pages_streams, updated_xobjects);
                  }
 
                  if (out_bytes.empty()) {
@@ -1579,6 +1584,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                 float min_overlap_ratio) {
                  (void)min_overlap_ratio;
                  std::map<int, std::vector<uint8_t>> pages_streams;
+                 std::map<int, std::vector<uint8_t>> updated_xobjects;
                  std::mutex res_mutex;
 
                  std::vector<std::pair<int, std::vector<std::array<float, 4>>>> tasks(page_rects_map.begin(), page_rects_map.end());
@@ -1613,12 +1619,16 @@ PYBIND11_MODULE(winnerz_core, m) {
 
                                  fz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
                                  float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
+                                 std::map<int, std::vector<uint8_t>> page_updated_xobjects;
                                  const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
-                                     *shared_doc, page_index, zones, ctm_arr);
+                                     *shared_doc, page_index, zones, page_updated_xobjects, ctm_arr);
 
                                  {
                                      std::lock_guard<std::mutex> lock(res_mutex);
                                      pages_streams[page_index] = filtered;
+                                     for (const auto& kv : page_updated_xobjects) {
+                                         updated_xobjects[kv.first] = kv.second;
+                                     }
                                  }
                              }
                          });
@@ -1628,7 +1638,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                          if (th.joinable()) th.join();
                      }
 
-                     if (!self.doc->save_multiple_pages_content_incremental(pages_streams, output_pdf)) {
+                     if (!self.doc->save_multiple_pages_content_incremental(pages_streams, output_pdf, updated_xobjects)) {
                          throw std::runtime_error("save_multiple_pages_content_incremental failed");
                      }
                  }
@@ -1658,11 +1668,15 @@ PYBIND11_MODULE(winnerz_core, m) {
 
                  fz_matrix ctm = ComputePageCTM(self.doc->get_page_geometry(page_index));
                  float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
+                 std::map<int, std::vector<uint8_t>> updated_xobjects;
                  const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
-                     *self.doc, page_index, zones, ctm_arr);
+                     *self.doc, page_index, zones, updated_xobjects, ctm_arr);
 
-                 if (!self.doc->save_page_content_incremental(page_index, filtered, output_pdf)) {
-                     throw std::runtime_error("save_page_content_incremental failed");
+                 // Since save_page_content_incremental doesn't handle xobjects natively yet, we just route it through save_multiple_pages_content_incremental
+                 std::map<int, std::vector<uint8_t>> pages_streams;
+                 pages_streams[page_index] = filtered;
+                 if (!self.doc->save_multiple_pages_content_incremental(pages_streams, output_pdf, updated_xobjects)) {
+                     throw std::runtime_error("save_multiple_pages_content_incremental failed");
                  }
 
                  py::dict out;
