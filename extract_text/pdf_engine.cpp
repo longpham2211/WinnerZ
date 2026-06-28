@@ -5928,7 +5928,8 @@ std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_
                         }
                     }
                 } else {
-                    while (end_pos < new_dict.size() && !std::isspace(new_dict[end_pos]) && new_dict[end_pos] != '/' && new_dict[end_pos] != '>') ++end_pos;
+                    if (end_pos < new_dict.size() && new_dict[end_pos] == '/') ++end_pos;
+                    while (end_pos < new_dict.size() && !std::isspace(new_dict[end_pos]) && new_dict[end_pos] != '/' && new_dict[end_pos] != '>' && new_dict[end_pos] != '<' && new_dict[end_pos] != '[') ++end_pos;
                 }
                 new_dict.erase(pos, end_pos - pos);
             }

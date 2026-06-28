@@ -1317,26 +1317,21 @@ static std::string run_filter(
                 auto segs = filter_show_string(
                     t.bytes, st, ctm, zones,
                     width_map, code_bytes_map, codespace_map, vm);
-                // Check if there are any segments (bytes to emit)
-                bool any_bytes = false;
-                for (const auto& s : segs) if (!s.is_number) { any_bytes = true; break; }
-                if (any_bytes) {
-                    // Accumulate kerning adjustments to compensate for removed characters
-                    std::string arr_content;
-                    for (const auto& seg : segs) {
-                        if (!arr_content.empty()) arr_content += ' ';
-                        if (seg.is_number) {
-                            char tmp[32]; format_pdf_float(tmp, sizeof(tmp), seg.number);
-                            arr_content += tmp;
-                        } else {
-                            append_pdf_string(arr_content, seg.bytes);
-                        }
+                std::string arr_content;
+                for (const auto& seg : segs) {
+                    if (!arr_content.empty()) arr_content += ' ';
+                    if (seg.is_number) {
+                        char tmp[32]; format_pdf_float(tmp, sizeof(tmp), seg.number);
+                        arr_content += tmp;
+                    } else {
+                        append_pdf_string(arr_content, seg.bytes);
                     }
+                }
+                if (!arr_content.empty()) {
                     out.write_raw("[");
                     out.write_raw(arr_content);
                     out.write_raw("] TJ\n");
                 }
-                // If no bytes kept: emit nothing (completely redacted)
             } else {
                 for (const auto& op2 : operands) emit_token(out, op2);
                 out.emit_op("Tj");
@@ -1349,7 +1344,6 @@ static std::string run_filter(
         else if (op == "TJ") {
             if (in_text && !operands.empty() && operands.back().type == TokType::Array) {
                 std::string arr_content;
-                bool any_bytes = false;
 
                 for (const Token& item : operands.back().items) {
                     if (item.type == TokType::String) {
@@ -1364,7 +1358,6 @@ static std::string run_filter(
                                 arr_content += tmp;
                             } else {
                                 append_pdf_string(arr_content, seg.bytes);
-                                any_bytes = true;
                             }
                         }
                     } else if (item.type == TokType::Number) {
@@ -1386,7 +1379,7 @@ static std::string run_filter(
                     }
                 }
 
-                if (any_bytes) {
+                if (!arr_content.empty()) {
                     out.write_raw("[");
                     out.write_raw(arr_content);
                     out.write_raw("] TJ\n");
@@ -1529,9 +1522,15 @@ static std::string run_filter(
 
                 if (!xobj.stream_ptr) continue;
 
+                // Accumulate redactions if XObject is placed multiple times
+                const std::vector<uint8_t>* input_stream = xobj.stream_ptr.get();
+                if (out_updated_xobjects && out_updated_xobjects->count(xobj.obj_id) > 0) {
+                    input_stream = &(*out_updated_xobjects)[xobj.obj_id];
+                }
+
                 // Recursive: filter XObject content with baked_ctm
                 std::string inner = run_filter(
-                    *xobj.stream_ptr, baked_ctm, zones,
+                    *input_stream, baked_ctm, zones,
                     merged_width, merged_codebytes, merged_codespace,
                     merged_matrix, merged_vm,
                     std::make_shared<const WinExtract::WinFormXObjectMap>(merged_xobjs),

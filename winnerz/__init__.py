@@ -508,11 +508,13 @@ class Page:
             if hasattr(self.doc._core_doc, "get_json"):
                 return self.doc._core_doc.get_json(self.index, False, sort)
             import json
+
             return json.dumps(self.get_text("dict", sort=sort))
         if mode == "rawjson":
             if hasattr(self.doc._core_doc, "get_json"):
                 return self.doc._core_doc.get_json(self.index, True, sort)
             import json
+
             return json.dumps(self.get_text("rawdict", sort=sort))
         if mode == "blocks":
             return _call_text_json_compat(
@@ -825,12 +827,10 @@ class Document:
 
     def close(self):
         self._is_closed = True  # Mark as closed for cache invalidation
-        # Dọn sạch các page trước
         for i in range(self._page_count):
             if self._pages[i] is not None:
                 self._pages[i] = None
 
-        # Đóng tài liệu pdfium
         if hasattr(self, "_pdfium_doc") and self._pdfium_doc is not None:
             try:
                 self._pdfium_doc.close()
@@ -845,7 +845,6 @@ class Document:
                 pass
             self._pdfium_edit_doc = None
 
-        # Giải phóng core
         if hasattr(self, "_core_doc"):
             self._core_doc = None
 
@@ -887,7 +886,6 @@ def open(path_or_bytes):
 
     with _DOC_CACHE_LOCK:
         _DOC_CACHES[resolved_path] = (size, mtime_ns, doc, time.time())
-        # Tự động dọn dẹp nếu vượt quá 10 file
         if len(_DOC_CACHES) > _MAX_CACHE_ENTRIES:
             oldest_path = min(_DOC_CACHES.keys(), key=lambda k: _DOC_CACHES[k][3])
             old_doc = _DOC_CACHES.pop(oldest_path)[2]
@@ -898,9 +896,10 @@ def open(path_or_bytes):
 
     return doc
 
+
 def preload_fonts(fonts_dir):
     """
-    (Legacy Compatibility) 
+    (Legacy Compatibility)
     Fonts are cached automatically by the C++ core upon first use.
     This function exists to prevent AttributeError in old scripts.
     """
