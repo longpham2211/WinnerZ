@@ -1494,6 +1494,127 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
     
     return result;
 }
+std::vector<uint8_t> InsertRectsToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertRectTask>>& pages_tasks, std::function<void(int, int)> progress_cb, int num_threads_opt) {
+    std::mutex doc_mutex;
+    std::mutex output_mutex;
+    std::map<int, std::string> updated_objects;
+    std::map<int, std::string> new_objects;
+    std::map<int, std::string> pages_streams; // using strings directly for uncompressed streams
+
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    // 1. Prepare raw content stream for each page
+    for (const auto& item : pages_tasks) {
+        int page_index = item.first;
+        const auto& tasks = item.second;
+        if (tasks.empty()) continue;
+
+        WinExtract::WinPageGeometry geo;
+        {
+            std::lock_guard<std::mutex> lock(doc_mutex);
+            geo = doc->get_page_geometry(page_index);
+        }
+        fz_matrix page_ctm = ComputePageCTM(geo);
+        fz_matrix inv_ctm = fz_invert_matrix(page_ctm);
+
+        auto to_pdf = [&inv_ctm](float xi, float yi) -> std::pair<float, float> {
+            return { xi * inv_ctm.a + yi * inv_ctm.c + inv_ctm.e, xi * inv_ctm.b + yi * inv_ctm.d + inv_ctm.f };
+        };
+
+        std::string stream_content;
+        for (const auto& rect : tasks) {
+            float r = std::max(0, std::min(255, rect.r)) / 255.0f;
+            float g = std::max(0, std::min(255, rect.g)) / 255.0f;
+            float b = std::max(0, std::min(255, rect.b)) / 255.0f;
+
+            auto [pdf_x0, pdf_y0] = to_pdf(rect.x0, rect.y1); 
+            auto [pdf_x1, pdf_y1] = to_pdf(rect.x1, rect.y0); 
+
+            float x = std::min(pdf_x0, pdf_x1);
+            float y = std::min(pdf_y0, pdf_y1);
+            float w = std::abs(pdf_x1 - pdf_x0);
+            float h = std::abs(pdf_y1 - pdf_y0);
+
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%.3f %.3f %.3f rg\n%.3f %.3f %.3f %.3f re\nf\n", r, g, b, x, y, w, h);
+            stream_content += buf;
+        }
+        
+        pages_streams[page_index] = stream_content;
+        if (progress_cb) progress_cb(page_index, static_cast<int>(pages_tasks.size()));
+    }
+
+    auto t_pages_loop = std::chrono::high_resolution_clock::now();
+
+    int next_obj_id = doc->get_max_obj_id() + 1;
+    int stream_start_id = next_obj_id;
+    
+    // Create global q and Q streams to wrap original contents
+    int q_stream_id = stream_start_id++;
+    new_objects[q_stream_id] = std::to_string(q_stream_id) + " 0 obj\n<< /Length 3 >>\nstream\n\nq\n\nendstream\nendobj\n";
+    
+    int Q_stream_id = stream_start_id++;
+    new_objects[Q_stream_id] = std::to_string(Q_stream_id) + " 0 obj\n<< /Length 3 >>\nstream\n\nQ\n\nendstream\nendobj\n";
+
+    for (const auto& item : pages_streams) {
+        int page_index = item.first;
+        WinExtract::WinPdfObject page_obj = doc->read_obj(doc->get_page_id(page_index));
+        int stream_id = stream_start_id++;
+        
+        std::string stream_content = std::to_string(stream_id) + " 0 obj\n<< /Length " + std::to_string(item.second.size()) + " >>\nstream\n";
+        stream_content.append(item.second);
+        stream_content += "\nendstream\nendobj\n";
+        new_objects[stream_id] = stream_content;
+        
+        std::string dict = page_obj.dict; // Need to fetch dict if updated_objects doesn't have it.
+        size_t contents_pos = dict.find("/Contents");
+        if (contents_pos != std::string::npos) {
+            size_t value_start = dict.find_first_not_of(" \t\r\n", contents_pos + 9);
+            if (value_start != std::string::npos) {
+                if (dict[value_start] == '[') {
+                    size_t array_end = dict.find("]", value_start);
+                    if (array_end != std::string::npos) {
+                        dict.insert(array_end, " " + std::to_string(Q_stream_id) + " 0 R " + std::to_string(stream_id) + " 0 R ");
+                        dict.insert(value_start + 1, " " + std::to_string(q_stream_id) + " 0 R ");
+                    }
+                } else {
+                    size_t r_pos = dict.find(" R", value_start);
+                    if (r_pos != std::string::npos) {
+                        int ref_id = std::stoi(dict.substr(value_start));
+                        WinExtract::WinPdfObject ref_obj = doc->read_obj(ref_id);
+                        size_t first_non_ws = ref_obj.dict.find_first_not_of(" \t\r\n");
+                        if (first_non_ws != std::string::npos && ref_obj.dict[first_non_ws] == '[') {
+                            std::string arr_dict = ref_obj.dict;
+                            size_t array_end = arr_dict.find("]", first_non_ws);
+                            if (array_end != std::string::npos) {
+                                arr_dict.insert(array_end, " " + std::to_string(Q_stream_id) + " 0 R " + std::to_string(stream_id) + " 0 R ");
+                                arr_dict.insert(first_non_ws + 1, " " + std::to_string(q_stream_id) + " 0 R ");
+                                updated_objects[ref_id] = std::to_string(ref_id) + " " + std::to_string(ref_obj.gen) + " obj\n" + arr_dict + "\nendobj\n";
+                            }
+                        } else {
+                            dict.insert(r_pos + 2, " " + std::to_string(Q_stream_id) + " 0 R " + std::to_string(stream_id) + " 0 R ]");
+                            dict.insert(value_start, "[ " + std::to_string(q_stream_id) + " 0 R ");
+                        }
+                    }
+                }
+            }
+        } else {
+            dict.insert(dict.rfind(">>"), " /Contents " + std::to_string(stream_id) + " 0 R ");
+        }
+        updated_objects[page_obj.id] = std::to_string(page_obj.id) + " " + std::to_string(page_obj.gen) + " obj\n" + dict + "\nendobj\n";
+    }
+    
+    auto t_dict_update = std::chrono::high_resolution_clock::now();
+    auto result = doc->save_incremental_update(updated_objects, new_objects);
+    auto t_end = std::chrono::high_resolution_clock::now();
+    
+    std::cout << "Rect Insert Profiling:\n";
+    std::cout << "  Streams Gen : " << std::chrono::duration<double>(t_pages_loop - t_start).count() << "s\n";
+    std::cout << "  Dict Update : " << std::chrono::duration<double>(t_dict_update - t_pages_loop).count() << "s\n";
+    std::cout << "  Save Increm : " << std::chrono::duration<double>(t_end - t_dict_update).count() << "s\n";
+    
+    return result;
+}
 
 } // namespace Winnerz
 #endif

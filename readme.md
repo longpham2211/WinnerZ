@@ -74,6 +74,7 @@ Represents a PDF document instance. It manages the lifecycle of the underlying f
 *   `get_all_dicts_json(include_chars=False, sort=False)`: Extracts rich structural data (similar to `get_text("dict")`) for all pages simultaneously using native C++ threads. Returns a massive JSON string. Use `json.loads()` to parse it instantly into a list of Python dictionaries, completely bypassing the single-threaded PyBind11 object creation overhead.
 *   `tobytes()`: (Zero-Disk) Returns the finalized PDF as a raw byte array directly from RAM, avoiding any disk I/O.
 *   `insert_text_json(json_str, fonts_dir="", progress_cb=None)`: High-speed native multi-threaded C++ text insertion. Renders a JSON string of tasks directly into the PDF document in RAM in parallel. Bypasses intermediate rendering pipelines and significantly boosts performance. Evaluates fallback fonts in `fonts_dir` on a per-character basis. Supports `"multiline": true` in JSON to enable Word-wrap mode within the bounding box.
+*   `insert_rects_json(json_str)`: Native C++ parallel rendering for colored rectangles (useful for background patching/redaction). Maps page indices to bounding boxes and RGB colors via JSON. Injects raw vector PDF streams (`re`, `f`) directly, bypassing slow PyMuPDF loops and Pillow image conversions. Highly recommended to pad bounding boxes by ~2 points to ensure full artifact coverage.
 *   `redact_pages_bytes(page_rects_map)`: (Native C++) Performs parallel Block Redaction across multiple pages and returns the cleaned PDF as `bytes` directly in RAM. Use with caution on very large files to avoid memory pressure.
 *   `get_page_font_basenames(page_index=0)`: Extracts the true BaseFont name (e.g., 'TimesNewRomanPS-BoldMT') from internal PDF resource identifiers (e.g., 'R14') by automatically stripping subset prefixes ('ABCDEF+'). Crucial for accurate font mapping and reconstruction.
 *   `close()`: Cleans up temporary resources, such as decrypted temporary files and in-memory editing buffers.
@@ -132,14 +133,14 @@ logging.getLogger("winnerz").setLevel(logging.DEBUG)
 Thanks to the native C++ multi-threading pipeline and persistent object caching, `WinnerZ` outperforms established industry standards like `PyMuPDF` (fitz) significantly in bulk text extraction tasks.
 
 *Tested on a standard 185-page PDF file (Plain Text Extraction):*
-*   ⏱️ PyMuPDF (`fitz`): **~0.44s**
-*   🚀 WinnerZ (`get_all_text()`): **~0.18s** (2.5x Faster)
+*  PyMuPDF (`fitz`): **~0.44s**
+*  WinnerZ (`get_all_text()`): **~0.18s** (2.5x Faster)
 
 *Tested on a 22MB Russian Chemistry Book (Structured Dictionary/JSON Extraction):*
-*   ⏱️ PyMuPDF Single-Thread (`get_text("json")`): **~24.2s**
-*   🚀 WinnerZ Native Multi-Thread (`get_all_dicts_json()`): **~11.4s** (> 2x Faster)
+*  PyMuPDF Single-Thread (`get_text("json")`): **~24.2s**
+*  WinnerZ Native Multi-Thread (`get_all_dicts_json()`): **~11.4s** (> 2x Faster)
 
 ### C++ Micro-OCR Benchmark
 *Tested on a 100% text-obfuscated PDF file (Forcing the system to Micro-OCR all characters):*
-*   🐢 Traditional OCR (Tesseract): **~3 - 5 seconds / page**
-*   ⚡ WinnerZ Micro-OCR (Bitwise Optimized): **~0.33 seconds / page** (~15x Faster)
+* Traditional OCR (Tesseract): **~3 - 5 seconds / page**
+* WinnerZ Micro-OCR (Bitwise Optimized): **~0.33 seconds / page** (~15x Faster)

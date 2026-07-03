@@ -1764,6 +1764,52 @@ PYBIND11_MODULE(winnerz_core, m) {
              },
              py::arg("json_str"),
              py::arg("fonts_dir") = "")
+        .def("insert_rects_to_pages_json",
+             [](PyWinDocument& self, const std::string& json_str) -> py::bytes {
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+                 std::map<int, std::vector<Winnerz::WinInsertRectTask>> pages_tasks;
+                 try {
+                     json j = json::parse(json_str);
+                     for (auto& item : j.items()) {
+                         int page_index = std::stoi(item.key());
+                         auto tasks_array = item.value();
+                         std::vector<Winnerz::WinInsertRectTask> tasks;
+                         for (auto& task_item : tasks_array) {
+                             Winnerz::WinInsertRectTask task;
+                             auto rect = task_item["rect"];
+                             float pad = 2.0f; // Default padding to fix tight PyMuPDF bboxes
+                             if (task_item.contains("pad")) {
+                                 pad = task_item["pad"].get<float>();
+                             }
+                             task.x0 = rect[0].get<float>() - pad;
+                             task.y0 = rect[1].get<float>() - pad;
+                             task.x1 = rect[2].get<float>() + pad;
+                             task.y1 = rect[3].get<float>() + pad;
+                             auto color = task_item["color"];
+                             task.r = color[0].get<int>();
+                             task.g = color[1].get<int>();
+                             task.b = color[2].get<int>();
+                             tasks.push_back(task);
+                         }
+                         pages_tasks[page_index] = tasks;
+                     }
+                 } catch (const std::exception& e) {
+                     throw std::runtime_error(std::string("JSON parse error: ") + e.what());
+                 }
+
+                 std::vector<uint8_t> merged_bytes;
+                 {
+                     py::gil_scoped_release release;
+                     merged_bytes = Winnerz::InsertRectsToMultiplePages(self.doc.get(), pages_tasks, nullptr, 0);
+                 }
+                 if (merged_bytes.empty()) return pybind11::bytes();
+                 return pybind11::bytes(reinterpret_cast<const char*>(merged_bytes.data()), merged_bytes.size());
+#else
+                 throw std::runtime_error("insert_rects_to_pages_json is not supported (PDFium not available)");
+                 return pybind11::bytes();
+#endif
+             },
+             py::arg("json_str"))
         .def("get_page_font_basenames",
              [](PyWinDocument& self, int page_index) -> py::dict {
                  // Returns {resource_name: base_font_name} for the page

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "winnerz"
-version = "1.2.17.4"
+version = "1.2.17.5"
 description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
 readme = "readme.md"
 authors = [

@@ -29,7 +29,18 @@ struct WinInsertTextTask {
     bool multiline;
     std::string font_family;
 };
+struct WinInsertRectTask {
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+    int r;
+    int g;
+    int b;
+};
+
 void PreloadFonts(const std::string& fonts_dir);
 std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertTextTask>>& pages_tasks, const std::string& fonts_dir, std::function<void(int, int)> progress_cb = nullptr, int num_threads_opt = 0);
+std::vector<uint8_t> InsertRectsToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertRectTask>>& pages_tasks, std::function<void(int, int)> progress_cb = nullptr, int num_threads_opt = 0);
 
 } // namespace Winnerz

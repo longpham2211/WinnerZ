@@ -792,6 +792,23 @@ class Document:
             return self._core_doc.insert_text_to_pages(tasks_dict, fonts_dir)
         raise NotImplementedError("insert_text_json is not supported by the core")
 
+    def insert_rects_json(self, json_str):
+        """
+        Insert colored rectangles into multiple pages concurrently using C++.
+        Input format: JSON string mapping page_index (int) -> list of tasks.
+        Example:
+            {
+                "0": [
+                    {"rect": [10, 10, 100, 30], "color": [255, 0, 0]}
+                ]
+            }
+        Note: It is recommended to pad the bounding boxes by 2-3 points (e.g., rect[0]-2, rect[1]-2, rect[2]+2, rect[3]+2) 
+        to ensure full coverage of text artifacts since PyMuPDF font bounding boxes can be very tight.
+        """
+        if hasattr(self._core_doc, "insert_rects_to_pages_json"):
+            return self._core_doc.insert_rects_to_pages_json(json_str)
+        raise NotImplementedError("insert_rects_json is not supported by the core")
+
     def get_page_font_basenames(self, page_index=0):
         """
         Returns a dict mapping PDF resource names (e.g. 'R14') to the real
