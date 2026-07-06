@@ -714,7 +714,6 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
 
 static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index, bool include_chars, bool sort_output) {
     fz_matrix ctm = ComputePageCTM(extracted.geo);
-    // Dùng CropBox (giống LoadPageRect) để tính width/height — tránh lệch tỉ lệ khi CropBox origin != (0,0)
     std::array<float, 4> crop_arr = {extracted.geo.cropbox.x0, extracted.geo.cropbox.y0, extracted.geo.cropbox.x1, extracted.geo.cropbox.y1};
     std::array<float, 4> page_bbox = fz_transform_rect(crop_arr, ctm);
 
@@ -785,7 +784,6 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
             PyDict_SetItemString(line_dict, "wmode", wmode_val);
             Py_DECREF(wmode_val);
 
-            // Tạm thời bỏ qua transform dir phức tạp, MuPDF có fz_transform_vector nhưng chúng ta giả lập:
             std::array<float, 2> t_dir = fz_transform_point(line.dir.x, line.dir.y, ctm);
             std::array<float, 2> t_orig = fz_transform_point(0, 0, ctm);
             PyObject* dir_tuple = PyTuple_New(2);

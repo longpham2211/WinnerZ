@@ -257,6 +257,7 @@ private:
     std::vector<int> parse_ref_array_after_key(const std::string& dict, const std::string& key);
     static bool is_page_object(const std::string& dict);
     static bool has_flate_filter(const std::string& dict);
+    static bool is_type0_font_dict(const std::string& dict);
 };
 
 class WinPdfInterpreter {

@@ -7245,7 +7245,12 @@ WinFontCodeBytesMap WinPdfDocument::get_page_font_code_bytes_map(int page_idx) {
 
         WinPdfObject font_obj = read_obj(font_obj_id);
         int code_bytes = 1;
-        if (parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0") {
+        bool is_type0 = (parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0") ||
+                        (font_obj.dict.find("/Subtype /Type0") != std::string::npos) ||
+                        (font_obj.dict.find("/Subtype/Type0") != std::string::npos) ||
+                        (font_obj.dict.find("/Encoding /Identity-H") != std::string::npos) ||
+                        (font_obj.dict.find("/Encoding/Identity-H") != std::string::npos);
+        if (is_type0) {
             code_bytes = 2;
             auto cs_it = code_space_map.find(it.first);
             if (cs_it != code_space_map.end()) {
@@ -9508,7 +9513,13 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
 
         const float missing_width = parse_missing_width_from_descriptor(font_obj);
 
-        if (subtype == "Type0") {
+        bool is_type0 = (subtype == "Type0") ||
+                        (font_obj.dict.find("/Subtype /Type0") != std::string::npos) ||
+                        (font_obj.dict.find("/Subtype/Type0") != std::string::npos) ||
+                        (font_obj.dict.find("/Encoding /Identity-H") != std::string::npos) ||
+                        (font_obj.dict.find("/Encoding/Identity-H") != std::string::npos);
+
+        if (is_type0) {
             std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
             if (!descendant_ids.empty()) {
                 WinPdfObject cid_font_obj = read_obj(descendant_ids.front());
@@ -10516,10 +10527,17 @@ bool WinPdfDocument::has_flate_filter(const std::string& dict) {
     return false;
 }
 
+bool WinPdfDocument::is_type0_font_dict(const std::string& dict) {
+    return (parse_name_value_after_key(dict, "/Subtype") == "Type0") ||
+           (dict.find("/Subtype /Type0") != std::string::npos) ||
+           (dict.find("/Subtype/Type0") != std::string::npos) ||
+           (dict.find("/Encoding /Identity-H") != std::string::npos) ||
+           (dict.find("/Encoding/Identity-H") != std::string::npos);
+}
 
 bool WinPdfDocument::resolve_type0_descendant_font(const WinPdfObject& font_obj, WinPdfObject& descendant_font_obj) {
     descendant_font_obj = {};
-    if (parse_name_value_after_key(font_obj.dict, "/Subtype") != "Type0") return false;
+    if (!is_type0_font_dict(font_obj.dict)) return false;
 
     std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
     if (descendant_ids.empty()) {
@@ -10596,7 +10614,11 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
     FT_Library library = get_freetype_library();
     if (!library) return;
 
-    const bool is_type0_subtype = parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0";
+    bool is_type0_subtype = (parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0") ||
+                            (font_obj.dict.find("/Subtype /Type0") != std::string::npos) ||
+                            (font_obj.dict.find("/Subtype/Type0") != std::string::npos) ||
+                            (font_obj.dict.find("/Encoding /Identity-H") != std::string::npos) ||
+                            (font_obj.dict.find("/Encoding/Identity-H") != std::string::npos);
     const CidToGidMapData cid_to_gid = load_cid_to_gid_map(font_obj);
 
     std::string descriptor_dict;
