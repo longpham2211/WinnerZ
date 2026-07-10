@@ -4,9 +4,7 @@ venv/
 
 # Python
 __pycache__/
-*.so
-*.pyd
-*.dylib
+
 
 # Build
 build/
@@ -56,3 +54,6 @@ backup-translation.py
 old-version-pdf-engine.cpp
 cc.py
 experiment.py
+*.so
+*.pyd
+*.dylib
