@@ -198,9 +198,11 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
             INSTALL_RPATH "@loader_path"
             BUILD_RPATH "@loader_path"
         )
+        # Avoid build failure if the library name doesn't exactly match
         add_custom_command(TARGET winnerz_core POST_BUILD
-            COMMAND install_name_tool -change "./libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>"
-            COMMAND install_name_tool -change "libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>"
+            COMMAND install_name_tool -change "./libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>" || true
+            COMMAND install_name_tool -change "libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>" || true
+            COMMAND install_name_tool -change "@rpath/libpdfium.dylib" "@loader_path/libpdfium.dylib" "$<TARGET_FILE:winnerz_core>" || true
         )
     endif()
 
