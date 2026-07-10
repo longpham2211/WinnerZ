@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "winnerz"
-version = "1.2.17.8"
+version = "1.2.17.9"
 description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
 readme = "readme.md"
 authors = [
@@ -48,7 +48,7 @@ sdist.exclude = [
     "data/**/*",
     "temp_uploads/**/*"
 ]
-wheel.packages = ["winnerz"]
+wheel.packages = []
 
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-*"
