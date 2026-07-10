@@ -4,7 +4,9 @@ venv/
 
 # Python
 __pycache__/
-*.pyc
+*.so
+*.pyd
+*.dylib
 
 # Build
 build/

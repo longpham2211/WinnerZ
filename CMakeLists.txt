@@ -239,8 +239,8 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     endif()
 
     install(TARGETS winnerz_core DESTINATION winnerz/python)
-    install(FILES winnerz/__init__.py DESTINATION winnerz/python)
-    install(FILES winnerz/winnerz_core.pyi DESTINATION winnerz/python)
+    install(FILES winnerz/python/__init__.py DESTINATION winnerz/python)
+    install(FILES winnerz/python/winnerz_core.pyi DESTINATION winnerz/python)
     install(FILES "${WINNERZ_PDFIUM_SHARED_FILE}" DESTINATION winnerz/python)
 endif()
 
