@@ -174,7 +174,7 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
         FetchContent_MakeAvailable(pybind11)
     endif()
 
-    pybind11_add_module(winnerz_core src/winnerz_python_wrapper.cpp)
+    pybind11_add_module(winnerz_core wrapper_python/winnerz_python_wrapper.cpp)
     target_compile_features(winnerz_core PRIVATE cxx_std_17)
     target_include_directories(winnerz_core PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -208,24 +208,24 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
         set_target_properties(winnerz_core PROPERTIES
             PREFIX ""
             OUTPUT_NAME "winnerz_core"
-            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
-            RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/winnerz"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
+            RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python"
             BUILD_RPATH "\$ORIGIN;\$ORIGIN/../third-party/pdfium/lib"
             INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../third-party/pdfium/lib"
             BUILD_RPATH_USE_ORIGIN ON
         )
 
         file(GLOB WINNERZ_STALE_WINDOWS_ARTIFACTS
-            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/winnerz_core*.pyd"
-            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/winnerz_core*.pdb"
+            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python/winnerz_core*.pyd"
+            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/python/winnerz_core*.pdb"
         )
 
         if(WINNERZ_STALE_WINDOWS_ARTIFACTS)
@@ -236,9 +236,37 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
         endif()
     endif()
 
-    install(TARGETS winnerz_core DESTINATION winnerz)
-    install(FILES winnerz/__init__.py DESTINATION winnerz)
-    install(FILES winnerz/winnerz_core.pyi DESTINATION winnerz)
-    install(FILES "${WINNERZ_PDFIUM_SHARED_FILE}" DESTINATION winnerz)
+    install(TARGETS winnerz_core DESTINATION winnerz/python)
+    install(FILES winnerz/__init__.py DESTINATION winnerz/python)
+    install(FILES winnerz/winnerz_core.pyi DESTINATION winnerz/python)
+    install(FILES "${WINNERZ_PDFIUM_SHARED_FILE}" DESTINATION winnerz/python)
 endif()
 
+if(EMSCRIPTEN)
+    # Build WASM wrapper using Embind
+    add_executable(winnerz_wasm wrapper_wasm/winnerz_wasm_wrapper.cpp)
+    
+    target_compile_features(winnerz_wasm PRIVATE cxx_std_17)
+    target_include_directories(winnerz_wasm PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    target_link_libraries(winnerz_wasm PRIVATE WinnerZ)
+    
+    # Set output name and suffix
+    set_target_properties(winnerz_wasm PROPERTIES 
+        OUTPUT_NAME "winnerz_wasm"
+        SUFFIX ".js"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/js"
+    )
+    
+    # Emscripten specific linker flags
+    target_link_options(winnerz_wasm PRIVATE 
+        "-lembind" 
+        "-sMODULARIZE=1" 
+        "-sEXPORT_NAME=createWinnerzModule"
+        "-sWASM=1"
+        "-sALLOW_MEMORY_GROWTH=1"
+    )
+endif()

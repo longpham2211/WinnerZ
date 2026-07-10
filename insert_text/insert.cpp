@@ -977,8 +977,52 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
                     if (b == req_b && i == req_i) continue;
                     for (size_t f = 0; f < font_grid[b][i].size(); ++f) {
                         if (check_font_index(b, i, f)) {
-                            return &font_grid[b][i][f];
+                            best = &font_grid[b][i][f];
+                            break;
                         }
+                    }
+                    if (best) break;
+                }
+                if (best) break;
+            }
+        }
+
+        // -----------------------------------------------------------
+        // FINAL FALLBACK: Ignore missing glyphs (check_font_index).
+        // It's better to render text with "tofu boxes" (missing glyphs)
+        // than to completely drop the line.
+        // -----------------------------------------------------------
+        if (!best) {
+            auto find_name_in_grid_no_check = [&](int b, int i, const std::string& target_norm) -> FontSlot* {
+                if (target_norm.empty()) return nullptr;
+                for (size_t f = 0; f < font_grid[b][i].size(); ++f) {
+                    auto& slot = font_grid[b][i][f];
+                    if (slot.family_name_norm == target_norm) return &slot;
+                    if (slot.family_name_norm.find(target_norm) != std::string::npos) return &slot;
+                    if (slot.family_name_norm.size() >= 4 && target_norm.find(slot.family_name_norm) != std::string::npos) return &slot;
+                }
+                return nullptr;
+            };
+
+            if (!task_ff_norm.empty()) {
+                best = find_name_in_grid_no_check(req_b, req_i, task_ff_norm);
+                if (!best) {
+                    for (int b = 0; b < 2; b++) {
+                        for (int i = 0; i < 2; i++) {
+                            if (b == req_b && i == req_i) continue;
+                            best = find_name_in_grid_no_check(b, i, task_ff_norm);
+                            if (best) break;
+                        }
+                        if (best) break;
+                    }
+                }
+            }
+            
+            if (!best) {
+                // Just grab the first available font
+                for (int b = 0; b < 2 && !best; b++) {
+                    for (int i = 0; i < 2 && !best; i++) {
+                        if (!font_grid[b][i].empty()) best = &font_grid[b][i][0];
                     }
                 }
             }
@@ -1614,6 +1658,55 @@ std::vector<uint8_t> InsertRectsToMultiplePages(WinExtract::WinPdfDocument* doc,
     std::cout << "  Save Increm : " << std::chrono::duration<double>(t_end - t_dict_update).count() << "s\n";
     
     return result;
+}
+float MeasureTextWidth(const std::string& text, const std::string& font_path, float font_size, bool is_bold, bool is_italic) {
+#ifndef WINEXTRACT_USE_FREETYPE
+    return 0.0f;
+#else
+    if (text.empty() || font_path.empty()) return 0.0f;
+    std::lock_guard<std::mutex> lock(global_shaping_mutex);
+
+    FT_Library ft_library = nullptr;
+    if (FT_Init_FreeType(&ft_library)) return 0.0f;
+
+    FT_Face ft_face = nullptr;
+    if (FT_New_Face(ft_library, font_path.c_str(), 0, &ft_face)) {
+        FT_Done_FreeType(ft_library);
+        return 0.0f;
+    }
+
+    FT_Set_Char_Size(ft_face, 0, (int)(font_size * 64), 72, 72);
+
+    hb_font_t* hb_font = hb_ft_font_create(ft_face, NULL);
+    if (!hb_font) {
+        FT_Done_Face(ft_face);
+        FT_Done_FreeType(ft_library);
+        return 0.0f;
+    }
+
+    hb_buffer_t* hb_buffer = hb_buffer_create();
+    hb_buffer_add_utf8(hb_buffer, text.c_str(), -1, 0, -1);
+    hb_buffer_guess_segment_properties(hb_buffer);
+    
+    hb_shape(hb_font, hb_buffer, NULL, 0);
+
+    unsigned int glyph_count;
+    hb_glyph_position_t* glyph_pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
+    
+    float total_width = 0.0f;
+    for (unsigned int i = 0; i < glyph_count; ++i) {
+        total_width += glyph_pos[i].x_advance;
+    }
+    
+    total_width = total_width / 64.0f;
+    
+    hb_buffer_destroy(hb_buffer);
+    hb_font_destroy(hb_font);
+    FT_Done_Face(ft_face);
+    FT_Done_FreeType(ft_library);
+
+    return total_width;
+#endif
 }
 
 } // namespace Winnerz

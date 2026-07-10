@@ -40,6 +40,7 @@ struct WinInsertRectTask {
 };
 
 void PreloadFonts(const std::string& fonts_dir);
+float MeasureTextWidth(const std::string& text, const std::string& font_path, float font_size, bool is_bold = false, bool is_italic = false);
 std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertTextTask>>& pages_tasks, const std::string& fonts_dir, std::function<void(int, int)> progress_cb = nullptr, int num_threads_opt = 0);
 std::vector<uint8_t> InsertRectsToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertRectTask>>& pages_tasks, std::function<void(int, int)> progress_cb = nullptr, int num_threads_opt = 0);
 
