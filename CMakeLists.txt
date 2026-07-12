@@ -9,6 +9,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
+if(MSVC)
+    add_compile_options(/bigobj)
+endif()
+
 if(WIN32)
     option(WINNERZ_BUILD_PYTHON_WRAPPER "Build Python module (Pybind11)" ON)
 else()

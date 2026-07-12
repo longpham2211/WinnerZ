@@ -4642,7 +4642,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             };
 
             if (seq.empty()) {
-                seq.push_back(0xFFFD);
+                seq.push_back(code);
                 return false;
             }
 
@@ -4656,7 +4656,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             }
 
             if (clean.empty()) {
-                clean.push_back(0xFFFD);
+                clean.push_back(code);
                 seq.swap(clean);
                 return false;
             }
@@ -4821,7 +4821,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             bool cid_fallback = false;
 
             if (unicode_seq.empty()) {
-                unicode_seq.push_back(0xFFFD);
+                unicode_seq.push_back(code);
                 cid_fallback = false; 
             } else {
                 cid_fallback = sanitize_unicode_sequence(code, unicode_seq);
