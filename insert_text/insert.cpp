@@ -1341,7 +1341,17 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
                         return { xi * inv_ctm.a + yi * inv_ctm.c + inv_ctm.e, xi * inv_ctm.b + yi * inv_ctm.d + inv_ctm.f };
                     };
 
-                    float baseline_y_img = task.y0 + fs * 0.8f;
+                    float ascender_ratio = 0.8f;
+                    FT_Face face = nullptr;
+                    if (slot) {
+                        face = slot->subset_face ? slot->subset_face : slot->face;
+                        if (face && face->units_per_EM > 0) {
+                            ascender_ratio = (float)face->ascender / (float)face->units_per_EM;
+                        }
+                    }
+                    float box_h = task.y1 - task.y0;
+                    float leading = box_h - fs;
+                    float baseline_y_img = task.y0 + (leading > 0 ? leading / 2.0f : 0.0f) + fs * ascender_ratio;
                     if (baseline_y_img > task.y1) baseline_y_img = task.y1;
 
                     auto sanitize_commas = [](char* buf) {
