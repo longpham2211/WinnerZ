@@ -788,7 +788,7 @@ static std::string NormalizeFontName(const std::string& name) {
     return out;
 }
 
-std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertTextTask>>& pages_tasks, const std::string& fonts_dir, std::function<void(int, int)> progress_cb, int num_threads_opt) {
+static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertTextTask>>& pages_tasks, const std::string& fonts_dir, std::function<void(int, int)> progress_cb, int num_threads_opt, bool fit_by_spacing) {
     if (!doc || pages_tasks.empty()) {
         return {};
     }
@@ -1313,6 +1313,7 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
                     std::string clean_text = task.text;
                     clean_text.erase(std::remove(clean_text.begin(), clean_text.end(), '\r'), clean_text.end());
 
+                    float spacing_ratio = 1.0f;
                     if (task.multiline) {
                         std::lock_guard<std::mutex> lock(global_shaping_mutex);
                         lines = HarfbuzzWordWrap(clean_text, cur_hb_font, fs, bbox_w);
@@ -1327,10 +1328,14 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
                             for (const auto& ln : lines) total_w += ln.width;
 
                             if (total_w > bbox_w && total_w > 0.0f) {
-                                fs = fs * (bbox_w / total_w);
-                                {
-                                    std::lock_guard<std::mutex> lock(global_shaping_mutex);
-                                    lines = HarfbuzzWordWrap(clean_text, cur_hb_font, fs, 1e9f);
+                                if (fit_by_spacing) {
+                                    spacing_ratio = bbox_w / total_w;
+                                } else {
+                                    fs = fs * (bbox_w / total_w);
+                                    {
+                                        std::lock_guard<std::mutex> lock(global_shaping_mutex);
+                                        lines = HarfbuzzWordWrap(clean_text, cur_hb_font, fs, 1e9f);
+                                    }
                                 }
                             }
                         }
@@ -1405,6 +1410,11 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
                             cur_x_img = task.x1 - line.width;
                         }
                         
+                        float line_spacing_ratio = spacing_ratio;
+                        if (fit_by_spacing && line.width > bbox_w && line.width > 0.0f) {
+                            line_spacing_ratio = bbox_w / line.width;
+                        }
+
                         for (const auto& g : line.glyphs) {
                             float xi = cur_x_img + g.x_offset;
                             float yi = cur_y_img + g.y_offset;
@@ -1412,11 +1422,11 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
                             auto [xp, yp] = to_pdf(xi, yi);
 
                             char tm_buf[128];
-                            snprintf(tm_buf, sizeof(tm_buf), "1 0 %.4f 1 %.3f %.3f Tm\n", skew, xp, yp);
+                            snprintf(tm_buf, sizeof(tm_buf), "%.4f 0 %.4f 1 %.3f %.3f Tm\n", line_spacing_ratio, skew, xp, yp);
                             sanitize_commas(tm_buf);
                             page_stream += tm_buf;
                             page_stream += create_hex_string_single(g.id) + " Tj\n";
-                            cur_x_img += g.x_advance;
+                            cur_x_img += g.x_advance * line_spacing_ratio;
                         }
                         cur_y_img += fs * 1.2f;
                     }
@@ -1547,6 +1557,14 @@ std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, 
     std::cout << "  Save Increm : " << std::chrono::duration<double>(t_end - t_dict_update).count() << "s\n";
     
     return result;
+}
+
+std::vector<uint8_t> InsertTextToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertTextTask>>& pages_tasks, const std::string& fonts_dir, std::function<void(int, int)> progress_cb, int num_threads_opt) {
+    return InsertTextToMultiplePagesInternal(doc, pages_tasks, fonts_dir, progress_cb, num_threads_opt, false);
+}
+
+std::vector<uint8_t> InsertTextToMultiplePagesFitSpacing(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertTextTask>>& pages_tasks, const std::string& fonts_dir, std::function<void(int, int)> progress_cb, int num_threads_opt) {
+    return InsertTextToMultiplePagesInternal(doc, pages_tasks, fonts_dir, progress_cb, num_threads_opt, true);
 }
 std::vector<uint8_t> InsertRectsToMultiplePages(WinExtract::WinPdfDocument* doc, const std::map<int, std::vector<WinInsertRectTask>>& pages_tasks, std::function<void(int, int)> progress_cb, int num_threads_opt) {
     std::mutex doc_mutex;

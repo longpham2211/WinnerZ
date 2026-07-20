@@ -1770,6 +1770,81 @@ PYBIND11_MODULE(winnerz_core, m) {
              },
              py::arg("json_str"),
              py::arg("fonts_dir") = "")
+        .def("insert_text_to_pages_fit_spacing_json",
+              [](PyWinDocument& self, const std::string& json_str, const std::string& fonts_dir) -> py::bytes {
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+                  std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
+                 
+                 try {
+                     json j = json::parse(json_str);
+                     for (auto& item : j.items()) {
+                         std::string page_key = item.key();
+                         auto tasks_array = item.value();
+                         int page_index = std::stoi(page_key);
+                         std::vector<Winnerz::WinInsertTextTask> tasks;
+                         for (auto& task_item : tasks_array) {
+                             Winnerz::WinInsertTextTask task;
+                             task.text = task_item.value("text", "");
+                             auto rect = task_item["rect"];
+                             task.x0 = rect[0].get<double>();
+                             task.y0 = rect[1].get<double>();
+                             task.x1 = rect[2].get<double>();
+                             task.y1 = rect[3].get<double>();
+                             task.font_size = task_item.value("size", 12.0);
+                             auto color = task_item["color"];
+                             task.r = color[0].get<int>();
+                             task.g = color[1].get<int>();
+                             task.b = color[2].get<int>();
+                             task.bold = task_item.value("bold", false);
+                             task.italic = task_item.value("italic", false);
+                             task.multiline = task_item.value("multiline", false);
+                             task.font_family = task_item.value("font_family", "");
+                             tasks.push_back(task);
+                         }
+                         pages_tasks[page_index] = tasks;
+                     }
+                 } catch (const std::exception& e) {
+                     throw std::runtime_error(std::string("JSON parse error: ") + e.what());
+                 }
+
+                 std::vector<uint8_t> merged_bytes;
+                 {
+                     py::gil_scoped_release release;
+                     merged_bytes = Winnerz::InsertTextToMultiplePagesFitSpacing(self.doc.get(), pages_tasks, fonts_dir, nullptr, 0);
+                 }
+                 
+                 if (merged_bytes.empty()) {
+                     if (!self.mem_data.empty()) {
+                         return pybind11::bytes(reinterpret_cast<const char*>(self.mem_data.data()), self.mem_data.size());
+                     }
+                     std::ifstream file(self.path, std::ios::binary | std::ios::ate);
+                     std::streamsize size = file.tellg();
+                     file.seekg(0, std::ios::beg);
+                     std::vector<uint8_t> buffer(size);
+                     if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+                         return pybind11::bytes(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+                     }
+                     return pybind11::bytes();
+                 }
+                 
+                 py::bytes out_bytes = pybind11::bytes(reinterpret_cast<const char*>(merged_bytes.data()), merged_bytes.size());
+                 
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+                 try {
+                     PyPdfiumEditorDoc repair_doc(out_bytes);
+                     out_bytes = repair_doc.save();
+                 } catch (...) {
+                     // Fallback to original bytes if repair fails
+                 }
+#endif
+                 return out_bytes;
+#else
+                 throw std::runtime_error("insert_text_to_pages_json is not supported (PDFium not available)");
+                 return pybind11::bytes();
+#endif
+             },
+             py::arg("json_str"),
+             py::arg("fonts_dir") = "")
         .def("insert_rects_to_pages_json",
              [](PyWinDocument& self, const std::string& json_str) -> py::bytes {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW

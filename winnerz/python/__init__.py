@@ -792,6 +792,16 @@ class Document:
             return self._core_doc.insert_text_to_pages(tasks_dict, fonts_dir)
         raise NotImplementedError("insert_text_json is not supported by the core")
 
+    def insert_text_fit_spacing_json(self, json_str, fonts_dir="", progress_cb=None):
+        """
+        Insert text into multiple pages concurrently using C++.
+        If text width exceeds bounds, it compresses letter spacing instead of shrinking font size.
+        Input format: JSON string mapping page_index (int) -> list of tasks.
+        """
+        if hasattr(self._core_doc, "insert_text_to_pages_fit_spacing_json"):
+            return self._core_doc.insert_text_to_pages_fit_spacing_json(json_str, fonts_dir)
+        raise NotImplementedError("insert_text_to_pages_fit_spacing_json is not supported by the core")
+
     def insert_rects_json(self, json_str):
         """
         Insert colored rectangles into multiple pages concurrently using C++.

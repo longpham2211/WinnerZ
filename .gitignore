@@ -56,3 +56,4 @@ experiment.py
 *.so
 *.pyd
 *.dylib
+test.py
