@@ -11,31 +11,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            cibw_archs: "x86_64"
+          - os: ubuntu-24.04-arm
+            cibw_archs: "aarch64"
+          - os: windows-latest
+            cibw_archs: "AMD64 ARM64 x86"
+          - os: macos-latest
+            cibw_archs: "x86_64 arm64"
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
-
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          CIBW_ARCHS_MACOS: x86_64 arm64 
-          
-          # Bỏ qua Python 3.9 và 3.10 trên Windows ARM64 vì Python chưa hỗ trợ chính thức
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
           CIBW_SKIP: "cp39-win_arm64 cp310-win_arm64"
-          
-          CIBW_ARCHS_WINDOWS: AMD64 ARM64 x86 
-          
-          CIBW_ARCHS_LINUX: x86_64 aarch64 
-          
           CIBW_TEST_REQUIRES: pytest
 
       - uses: actions/upload-artifact@v4
