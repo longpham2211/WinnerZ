@@ -205,13 +205,7 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     pybind11_add_module(winnerz_core wrapper_python/winnerz_python_wrapper.cpp)
     target_compile_features(winnerz_core PRIVATE cxx_std_17)
     
-    # Enable Python Stable ABI (abi3) to build once for all Python versions
-    target_compile_definitions(winnerz_core PRIVATE PYBIND11_LIMITED_API)
-    if(WIN32)
-        set_target_properties(winnerz_core PROPERTIES SUFFIX ".pyd")
-    else()
-        set_target_properties(winnerz_core PROPERTIES SUFFIX ".abi3.so")
-    endif()
+
     
     target_include_directories(winnerz_core PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "winnerz"
-version = "1.2.18.5"
+version = "1.2.18.6"
 description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
 readme = "readme.md"
 authors = [
@@ -29,7 +29,7 @@ Repository = "https://github.com/longpham2211/WinnerZ"
 [tool.scikit-build]
 cmake.version = ">=3.10"
 ninja.version = ">=1.10"
-wheel.py-api = "cp39"
+
 sdist.include = [
     "winnerz/**/*",
     "src/**/*",
@@ -52,8 +52,8 @@ sdist.exclude = [
 wheel.packages = []
 
 [tool.cibuildwheel]
-# Build cp39 for most platforms (abi3), but build cp311 for win_arm64 since Python < 3.11 lacks Windows ARM64 support
-build = "cp39-* cp311-win_arm64"
+# Build all python versions
+build = "*"
 skip = "pp* *-musllinux* cp39-win_arm64 cp310-win_arm64"
 test-requires = "pytest"
 # test-command = "pytest {project}/tests"
