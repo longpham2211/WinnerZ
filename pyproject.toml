@@ -52,14 +52,14 @@ sdist.exclude = [
 wheel.packages = []
 
 [tool.cibuildwheel]
-# Only build cp39 because abi3 will make it compatible with 3.10, 3.11, 3.12, 3.13 automatically
-build = "cp39-*"
-skip = "pp* *-musllinux*"
+# Build cp39 for most platforms (abi3), but build cp311 for win_arm64 since Python < 3.11 lacks Windows ARM64 support
+build = "cp39-* cp311-win_arm64"
+skip = "pp* *-musllinux* cp39-win_arm64 cp310-win_arm64"
 test-requires = "pytest"
 # test-command = "pytest {project}/tests"
 
 [tool.cibuildwheel.macos]
-environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
+environment = { MACOSX_DEPLOYMENT_TARGET = "12.0" }
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "quay.io/pypa/manylinux_2_34_x86_64"
