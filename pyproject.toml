@@ -29,6 +29,7 @@ Repository = "https://github.com/longpham2211/WinnerZ"
 [tool.scikit-build]
 cmake.version = ">=3.10"
 ninja.version = ">=1.10"
+wheel.py-api = "cp39"
 sdist.include = [
     "winnerz/**/*",
     "src/**/*",
@@ -51,7 +52,8 @@ sdist.exclude = [
 wheel.packages = []
 
 [tool.cibuildwheel]
-build = "cp39-* cp310-* cp311-* cp312-*"
+# Only build cp39 because abi3 will make it compatible with 3.10, 3.11, 3.12, 3.13 automatically
+build = "cp39-*"
 skip = "pp* *-musllinux*"
 test-requires = "pytest"
 # test-command = "pytest {project}/tests"
@@ -60,7 +62,8 @@ test-requires = "pytest"
 environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
 
 [tool.cibuildwheel.linux]
-manylinux-x86_64-image = "manylinux_2_28"
+manylinux-x86_64-image = "manylinux_2_34"
+manylinux-aarch64-image = "manylinux_2_34"
 environment = { LD_LIBRARY_PATH = "/project/third-party/pdfium/lib:$LD_LIBRARY_PATH" }
 
 
