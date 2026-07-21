@@ -11,7 +11,13 @@
 
 #ifdef _MSC_VER
 #include <intrin.h>
+#ifdef _WIN64
 #define POPCOUNT64 __popcnt64
+#else
+inline int POPCOUNT64(uint64_t val) {
+    return __popcnt(static_cast<unsigned int>(val)) + __popcnt(static_cast<unsigned int>(val >> 32));
+}
+#endif
 #else
 #define POPCOUNT64 __builtin_popcountll
 #endif
