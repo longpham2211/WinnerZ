@@ -799,8 +799,12 @@ class Document:
         Input format: JSON string mapping page_index (int) -> list of tasks.
         """
         if hasattr(self._core_doc, "insert_text_to_pages_fit_spacing_json"):
-            return self._core_doc.insert_text_to_pages_fit_spacing_json(json_str, fonts_dir)
-        raise NotImplementedError("insert_text_to_pages_fit_spacing_json is not supported by the core")
+            return self._core_doc.insert_text_to_pages_fit_spacing_json(
+                json_str, fonts_dir
+            )
+        raise NotImplementedError(
+            "insert_text_to_pages_fit_spacing_json is not supported by the core"
+        )
 
     def insert_rects_json(self, json_str):
         """
@@ -939,6 +943,7 @@ except Exception:
     pass
 
 
+# Internal API
 def measure_text_width(text, font_path, font_size, is_bold=False, is_italic=False):
     """
     Measure the horizontal pixel width of a text string using C++ (HarfBuzz and FreeType).
