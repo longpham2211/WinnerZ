@@ -109,11 +109,14 @@ target_include_directories(WinnerZ PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/extract_text"
 )
 
-find_library(
-    WINNERZ_LCMS2_LIB
-    NAMES lcms2 lcms2.so.2 liblcms2.so.2
-    PATHS /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu
-)
+if(UNIX AND NOT APPLE)
+    find_library(
+        WINNERZ_LCMS2_LIB
+        NAMES lcms2 lcms2.so.2 liblcms2.so.2
+        PATHS /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu
+    )
+endif()
+
 if(WINNERZ_LCMS2_LIB)
     target_link_libraries(WinnerZ PUBLIC "${WINNERZ_LCMS2_LIB}")
     target_compile_definitions(WinnerZ PRIVATE WINNERZ_USE_LCMS2=1)
