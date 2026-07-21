@@ -29,6 +29,9 @@ jobs:
         env:
           CIBW_ARCHS_MACOS: x86_64 arm64 
           
+          # Bỏ qua Python 3.9 và 3.10 trên Windows ARM64 vì Python chưa hỗ trợ chính thức
+          CIBW_SKIP: "cp39-win_arm64 cp310-win_arm64"
+          
           CIBW_ARCHS_WINDOWS: AMD64 ARM64 x86 
           
           CIBW_ARCHS_LINUX: x86_64 aarch64 
