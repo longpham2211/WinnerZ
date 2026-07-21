@@ -7,7 +7,7 @@ on:
 
 jobs:
   build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }} (${{ matrix.cibw_archs }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -34,8 +34,6 @@ jobs:
         uses: pypa/cibuildwheel@v2.22.0
         env:
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
-          CIBW_SKIP: "cp39-win_arm64 cp310-win_arm64"
-          CIBW_TEST_REQUIRES: pytest
 
       - uses: actions/upload-artifact@v4
         with:
