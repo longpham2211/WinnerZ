@@ -62,8 +62,8 @@ test-requires = "pytest"
 environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
 
 [tool.cibuildwheel.linux]
-manylinux-x86_64-image = "manylinux_2_34"
-manylinux-aarch64-image = "manylinux_2_34"
+manylinux-x86_64-image = "quay.io/pypa/manylinux_2_34_x86_64"
+manylinux-aarch64-image = "quay.io/pypa/manylinux_2_34_aarch64"
 environment = { LD_LIBRARY_PATH = "/project/third-party/pdfium/lib:$LD_LIBRARY_PATH" }
 
 
