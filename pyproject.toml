@@ -64,7 +64,7 @@ environment = { MACOSX_DEPLOYMENT_TARGET = "12.0" }
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "quay.io/pypa/manylinux_2_34_x86_64"
 manylinux-aarch64-image = "quay.io/pypa/manylinux_2_34_aarch64"
-repair-wheel-command = "pip install wheel && python -c \"import sys, os, subprocess; w=sys.argv[1]; d=sys.argv[2]; p='manylinux_2_35_aarch64' if 'aarch64' in w else 'manylinux_2_35_x86_64'; out = subprocess.check_output(['wheel', 'tags', '--platform-tag', p, w]).decode().strip(); subprocess.run(['cp', out, d])\" {wheel} {dest_dir}"
+repair-wheel-command = "pip install wheel && python -c \"import sys, os, subprocess; w=sys.argv[1]; d=sys.argv[2]; p='manylinux_2_35_aarch64' if 'aarch64' in w else 'manylinux_2_35_x86_64'; out = subprocess.check_output(['wheel', 'tags', '--platform-tag', p, w]).decode().strip(); subprocess.run(['cp', os.path.join(os.path.dirname(w), out), d])\" {wheel} {dest_dir}"
 
 
 
