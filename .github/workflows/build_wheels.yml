@@ -18,7 +18,6 @@ jobs:
         with:
           submodules: recursive
 
-      # BƯỚC MỚI: Cài đặt QEMU trên Linux để giả lập chip ARM (cho phép biên dịch Linux ARM64)
       - name: Set up QEMU
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v3
@@ -28,17 +27,13 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.17.0
         env:
-          # Đã đủ Mac Intel và Apple Silicon
           CIBW_ARCHS_MACOS: x86_64 arm64 
           
-          # THÊM aarch64 (Linux ARM64)
           CIBW_ARCHS_LINUX: x86_64 aarch64 
           
-          # THÊM ARM64 (Windows ARM) và x86 (Windows 32-bit nếu bạn cần)
-          CIBW_ARCHS_WINDOWS: AMD64 ARM64 x86 
+          CIBW_ARCHS_WINDOWS: AMD64 ARM64 
           
           CIBW_TEST_REQUIRES: pytest
-          # CIBW_TEST_COMMAND: "pytest {project}/tests"
 
       - uses: actions/upload-artifact@v4
         with:
