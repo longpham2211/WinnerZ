@@ -38,6 +38,7 @@ void process_winnerz_engine(const std::string& path) {
         WinFontCodeSpaceMap font_codespace_map = doc->get_page_font_codespace_map(i);
         WinFontMatrixMap font_matrix_map = doc->get_page_font_matrix_map(i);
         WinFontVerticalMetricsMap font_vertical_metrics_map = doc->get_page_font_vertical_metrics_map(i);
+        WinFontW2Map font_w2_map = doc->get_page_font_w2_map(i);
         WinColorSpaceMap color_space_map = doc->get_page_color_space_map(i);
         WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(i);
         Rect              mediabox         = doc->get_page_geometry(i).mediabox;
@@ -68,7 +69,7 @@ void process_winnerz_engine(const std::string& path) {
             }
         }
 
-        WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, font_w2_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         WinPage structured_page = dev.finish_page();
         std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;
         WinTextExtractor::print_to_terminal(structured_page);

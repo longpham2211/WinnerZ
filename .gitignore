@@ -57,3 +57,4 @@ experiment.py
 *.pyd
 *.dylib
 test.py
+mupdf-master/

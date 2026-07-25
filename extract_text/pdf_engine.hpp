@@ -17,12 +17,14 @@
 #include "mapped_file.hpp"
 #include <mutex>
 #include <shared_mutex>
+#include "pdf_font_metrics.hpp"
 
 namespace WinExtract {
 
 using WinUnicodeSequence = std::vector<int>;
 using WinFontUnicodeMap = std::unordered_map<std::string, std::shared_ptr<const std::unordered_map<int, WinUnicodeSequence>>>;
 using WinFontWidthMap  = std::unordered_map<std::string, std::shared_ptr<const std::unordered_map<int, float>>>;
+using WinFontW2Map = std::unordered_map<std::string, std::shared_ptr<const WinW2MetricsMap>>;
 using WinFontCodeBytesMap = std::unordered_map<std::string, int>;
 
 struct WinCodeSpaceRange {
@@ -45,6 +47,7 @@ struct WinFontVerticalMetrics {
     bool is_italic = false;
     bool is_serif = false;
     bool is_mono = false;
+    int wmode = 0;
 };
 
 using WinFontVerticalMetricsMap = std::unordered_map<std::string, WinFontVerticalMetrics>;
@@ -117,6 +120,7 @@ struct WinFormXObject {
     WinFontCodeSpaceMap font_codespace_map;
     WinFontMatrixMap font_matrix_map;
     WinFontVerticalMetricsMap font_vertical_metrics_map;
+    WinFontW2Map font_w2_map;
     WinColorSpaceMap color_space_map;
     std::array<float, 6> matrix = {1, 0, 0, 1, 0, 0};
     bool has_bbox = false;
@@ -156,6 +160,7 @@ public:
     WinFontCodeSpaceMap get_page_font_codespace_map(int page_idx);
     WinFontMatrixMap get_page_font_matrix_map(int page_idx);
     WinFontVerticalMetricsMap get_page_font_vertical_metrics_map(int page_idx);
+    WinFontW2Map get_page_font_w2_map(int page_idx);
     WinColorSpaceMap get_page_color_space_map(int page_idx);
     std::shared_ptr<const WinFormXObjectMap> get_page_form_xobject_map(int page_idx);
     WinPageGeometry   get_page_geometry(int page_idx);
@@ -237,6 +242,7 @@ private:
     std::unordered_map<int, std::shared_ptr<const std::vector<WinCodeSpaceRange>>> cached_codespace_maps;
     std::unordered_map<int, std::array<float, 6>> cached_matrix_maps;
     std::unordered_map<int, WinFontVerticalMetrics> cached_vertical_metrics_maps;
+    std::unordered_map<int, std::shared_ptr<const WinW2MetricsMap>> cached_w2_maps;
     std::unordered_map<int, std::shared_ptr<const std::vector<uint8_t>>> cached_decoded_streams;
     std::unordered_map<int, std::shared_ptr<const WinFormXObjectMap>> cached_page_xobject_maps;
     std::unordered_map<std::string, std::shared_ptr<const WinFormXObjectMap>> cached_resource_xobject_maps;
@@ -269,6 +275,7 @@ public:
                    const WinFontCodeSpaceMap& font_codespace_map = {},
                    const WinFontMatrixMap& font_matrix_map = {},
                    const WinFontVerticalMetricsMap& font_vertical_metrics_map = {},
+                   const WinFontW2Map& font_w2_map = {},
                    const WinColorSpaceMap& color_space_map = {},
                    std::shared_ptr<const WinFormXObjectMap> form_xobject_map = nullptr,
                    const float* initial_ctm = nullptr,

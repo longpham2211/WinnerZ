@@ -79,6 +79,7 @@ add_library(WinnerZ STATIC
     extract_text/ucdn.cpp
     extract_text/miniz.c
     extract_text/micro_ocr.cpp
+    extract_text/pdf_font_metrics.cpp
 )
 set_target_properties(WinnerZ PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(WinnerZ PUBLIC cxx_std_17)

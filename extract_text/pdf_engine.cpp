@@ -3934,6 +3934,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                            const WinFontCodeSpaceMap& font_codespace_map,
                            const WinFontMatrixMap& font_matrix_map,
                            const WinFontVerticalMetricsMap& font_vertical_metrics_map,
+                           const WinFontW2Map& font_w2_map,
                            const WinColorSpaceMap& color_space_map,
                            std::shared_ptr<const WinFormXObjectMap> form_xobject_map,
                            const float* initial_ctm,
@@ -3963,6 +3964,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         TextState text_state;
         const std::unordered_map<int, std::vector<int>>* font_map = nullptr;
         const std::unordered_map<int, float>* width_map = nullptr;
+        const WinW2MetricsMap* w2_map = nullptr;
         const std::vector<WinCodeSpaceRange>* codespace_ranges = nullptr;
         int code_bytes = 1;
         float default_advance = 0.55f;
@@ -3980,6 +3982,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
     std::vector<GraphicsStateSnapshot> gstate_stack;
     const std::unordered_map<int, std::vector<int>>* active_font_map = nullptr;
     const std::unordered_map<int, float>* active_width_map = nullptr;
+    const WinW2MetricsMap* active_w2_map = nullptr;
     const std::vector<WinCodeSpaceRange>* active_codespace_ranges = nullptr;
     int active_code_bytes = 1;
     float active_default_advance = 0.55f;
@@ -4738,30 +4741,65 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             bi += static_cast<size_t>(consumed);
 
             float glyph_adv = active_default_advance;
-            if (active_width_map) {
-                auto wit = active_width_map->find(code);
-                if (wit != active_width_map->end()) {
-                    glyph_adv = wit->second;
-                } else {
-                    auto def_it = active_width_map->find(-1);
-                    if (def_it != active_width_map->end()) {
-                        glyph_adv = def_it->second;
-                    } else if (code == ' ') {
-                        glyph_adv = 0.33f;
+            float v_x = glyph_adv / 2.0f;
+            float v_y = 0.88f;
+
+            if (st.wmode == 1) {
+                glyph_adv = -1.0f; // Default vertical advance (DW2 w2_y default is -1000)
+                if (active_w2_map) {
+                    auto w2_it = active_w2_map->find(code);
+                    if (w2_it != active_w2_map->end()) {
+                        glyph_adv = w2_it->second.w2_y;
+                        v_x = w2_it->second.v_x;
+                        v_y = w2_it->second.v_y;
+                    } else {
+                        auto def_it = active_w2_map->find(-1);
+                        if (def_it != active_w2_map->end()) {
+                            glyph_adv = def_it->second.w2_y;
+                            v_x = def_it->second.v_x;
+                            v_y = def_it->second.v_y;
+                        }
                     }
                 }
-            } else if (code == ' ') {
-                glyph_adv = 0.33f;
+            } else {
+                if (active_width_map) {
+                    auto wit = active_width_map->find(code);
+                    if (wit != active_width_map->end()) {
+                        glyph_adv = wit->second;
+                    } else {
+                        auto def_it = active_width_map->find(-1);
+                        if (def_it != active_width_map->end()) {
+                            glyph_adv = def_it->second;
+                        } else if (code == ' ') {
+                            glyph_adv = 0.33f;
+                        }
+                    }
+                } else if (code == ' ') {
+                    glyph_adv = 0.33f;
+                }
             }
 
             const float fs = st.font_size;
             const float rise = st.text_rise;
-            float stm[6] = {
-                fs * h_scale * st.tm[0], fs * h_scale * st.tm[1],
-                fs * st.tm[2], fs * st.tm[3],
-                rise * st.tm[2] + st.tm[4],
-                rise * st.tm[3] + st.tm[5]
-            };
+            
+            float stm[6];
+            if (st.wmode == 1) {
+                float ox = -v_x * fs;
+                float oy = -v_y * fs;
+                stm[0] = fs * st.tm[0];
+                stm[1] = fs * st.tm[1];
+                stm[2] = fs * st.tm[2];
+                stm[3] = fs * st.tm[3];
+                stm[4] = (rise + oy) * st.tm[2] + ox * st.tm[0] + st.tm[4];
+                stm[5] = (rise + oy) * st.tm[3] + ox * st.tm[1] + st.tm[5];
+            } else {
+                stm[0] = fs * h_scale * st.tm[0];
+                stm[1] = fs * h_scale * st.tm[1];
+                stm[2] = fs * st.tm[2];
+                stm[3] = fs * st.tm[3];
+                stm[4] = rise * st.tm[2] + st.tm[4];
+                stm[5] = rise * st.tm[3] + st.tm[5];
+            }
 
             float m[6];
             m[0] = stm[0] * ctm[0] + stm[1] * ctm[2];
@@ -4985,6 +5023,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             snap.text_state = st;
             snap.font_map = active_font_map;
             snap.width_map = active_width_map;
+            snap.w2_map = active_w2_map;
             snap.codespace_ranges = active_codespace_ranges;
             snap.code_bytes = active_code_bytes;
             snap.default_advance = active_default_advance;
@@ -5011,6 +5050,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                 st = std::move(top.text_state);
                 active_font_map = top.font_map;
                 active_width_map = top.width_map;
+                active_w2_map = top.w2_map;
                 active_codespace_ranges = top.codespace_ranges;
                 active_code_bytes = top.code_bytes;
                 active_default_advance = top.default_advance;
@@ -5168,6 +5208,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                                            fit->second.font_codespace_map,
                                            fit->second.font_matrix_map,
                                            fit->second.font_vertical_metrics_map,
+                                           fit->second.font_w2_map,
                                            fit->second.color_space_map,
                                            fit->second.children,
                                            form_ctm,
@@ -5233,6 +5274,8 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                     active_is_mono = false;
                     active_ascender = 0.8f;
                     active_descender = -0.2f;
+                    active_w2_map = nullptr;
+                    st.wmode = 0;
 
                     const std::string lower_font = to_lower_ascii(normalize_pdf_font_name(st.font_name));
                     if (lower_font.find("bold") != std::string::npos ||
@@ -5275,6 +5318,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                         active_is_italic = vit->second.is_italic;
                         active_is_serif = vit->second.is_serif;
                         active_is_mono = vit->second.is_mono;
+                        st.wmode = vit->second.wmode;
                     }
 
                     auto wit = font_width_map.find(st.font_name);
@@ -5296,6 +5340,11 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                         if (bold_it != wit->second->end() && bold_it->second > 0.0f) {
                             active_is_bold = true;
                         }
+                    }
+
+                    auto w2it = font_w2_map.find(st.font_name);
+                    if (w2it != font_w2_map.end()) {
+                        active_w2_map = w2it->second.get();
                     }
 
                 }
@@ -7109,7 +7158,9 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                 }
 
                 cid_collection = build_cid_collection_name_from_cidsysteminfo(cid_system_info_dict);
-                if (!cid_collection.empty()) {
+                std::string temp_enc = parse_name_value_after_key(font_obj.dict, "/Encoding");
+                bool is_utf16_encoding = (temp_enc.find("UTF16") != std::string::npos || temp_enc.find("UCS2") != std::string::npos);
+                if (!cid_collection.empty() && !is_utf16_encoding) {
                     const auto& cid_fallback = load_collection_unicode_cmap(cid_collection);
                     if (!cid_fallback.empty()) {
                         cmap = cid_fallback;
@@ -8531,6 +8582,11 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                 // Local Form resources can reuse font aliases from the parent scope
                 // (for example /T1_0). Recompute metrics for the local binding.
                 WinFontVerticalMetrics metrics = get_base14_vertical_metrics(parse_name_value_after_key(font_obj.dict, "/BaseFont"));
+                
+                if (encoding_name == "Identity-V" || (encoding_name.length() >= 2 && encoding_name.substr(encoding_name.length() - 2) == "-V")) {
+                    metrics.wmode = 1;
+                }
+                
                 std::string descriptor_dict;
                 bool has_metrics = false;
                 if (resolve_font_descriptor_dict(font_obj, descriptor_dict)) {
@@ -9530,6 +9586,19 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                 if (extract_array_after_key(cid_font_obj.dict, "/W", w_array)) {
                     parse_cid_width_array(w_array, widths);
                 }
+
+                WinW2MetricsMap w2_metrics;
+                std::string dw2_array;
+                if (extract_array_after_key(cid_font_obj.dict, "/DW2", dw2_array)) {
+                    // DW2 format: [ v_y w2_1y ]. We just ignore it for now and use default if not present in W2.
+                }
+                std::string w2_array;
+                if (extract_array_after_key(cid_font_obj.dict, "/W2", w2_array)) {
+                    parse_cid_w2_array(w2_array, w2_metrics);
+                }
+                if (!w2_metrics.empty()) {
+                    cached_w2_maps[font_obj_id] = std::make_shared<const WinW2MetricsMap>(std::move(w2_metrics));
+                }
             }
 
             if (widths.find(-1) == widths.end() && missing_width > 0.0f) {
@@ -9649,6 +9718,26 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
 
     return out;
 }
+
+WinFontW2Map WinPdfDocument::get_page_font_w2_map(int page_idx) {
+    std::lock_guard<std::recursive_mutex> lock(cache_mutex);
+    WinFontW2Map out;
+    if (page_idx < 0 || page_idx >= static_cast<int>(page_ids.size()) || page_ids.empty()) {
+        return out;
+    }
+
+    // Ensure caches are populated
+    get_page_font_width_map(page_idx);
+
+    std::map<std::string, int> font_refs = get_page_font_name_to_id(page_idx);
+    for (const auto& entry : font_refs) {
+        if (cached_w2_maps.count(entry.second) && cached_w2_maps[entry.second]) {
+            out[entry.first] = cached_w2_maps[entry.second];
+        }
+    }
+    return out;
+}
+
 
 WinPageGeometry WinPdfDocument::get_page_geometry(int page_idx) {
     WinPageGeometry geo;
@@ -10869,7 +10958,10 @@ bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
         apply_differences_to_map(encoding_dict, dummy, &diff_names);
     }
 
-    fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+    bool is_utf16_encoding = (encoding_name.find("UTF16") != std::string::npos || encoding_name.find("UCS2") != std::string::npos);
+    if (!is_utf16_encoding) {
+        fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+    }
 
     cached_unicode_maps[font_obj_id] = std::make_shared<const std::unordered_map<int, WinUnicodeSequence>>(std::move(cmap));
     return true;

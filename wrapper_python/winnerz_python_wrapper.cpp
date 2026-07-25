@@ -551,6 +551,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     WinExtract::WinFontCodeSpaceMap font_codespace_map = doc->get_page_font_codespace_map(page_index);
     WinExtract::WinFontMatrixMap font_matrix_map = doc->get_page_font_matrix_map(page_index);
     WinExtract::WinFontVerticalMetricsMap font_vertical_metrics_map = doc->get_page_font_vertical_metrics_map(page_index);
+    WinExtract::WinFontW2Map font_w2_map = doc->get_page_font_w2_map(page_index);
     WinExtract::WinColorSpaceMap color_space_map = doc->get_page_color_space_map(page_index);
     std::shared_ptr<const WinExtract::WinFormXObjectMap> form_xobject_map = doc->get_page_form_xobject_map(page_index);
     WinExtract::WinPageGeometry geo = doc->get_page_geometry(page_index);
@@ -567,6 +568,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
         font_codespace_map,
         font_matrix_map,
         font_vertical_metrics_map,
+        font_w2_map,
         color_space_map,
         form_xobject_map,
         nullptr,
