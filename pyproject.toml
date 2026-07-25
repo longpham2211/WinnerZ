@@ -54,7 +54,7 @@ wheel.packages = []
 [tool.cibuildwheel]
 # Build all python versions
 build = "*"
-skip = "pp* *-musllinux* cp39-win_arm64 cp310-win_arm64"
+skip = "pp* *-musllinux* cp39-win_arm64 cp310-win_arm64 cp314*-win_arm64 *t-*"
 test-requires = "pytest"
 # test-command = "pytest {project}/tests"
 
