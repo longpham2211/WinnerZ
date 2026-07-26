@@ -7218,7 +7218,8 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
 #ifdef WINEXTRACT_USE_FREETYPE
         // Run FreeType fallback to fill any gaps, even if the font has a partial ToUnicode cmap
         // or a maliciously broken one.
-        fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+        // Disabled to prevent Mojibake on Windows caused by obfuscated TrueType subset cmaps
+        // fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
 #endif
 
         if (is_type3_subtype) {
@@ -10969,7 +10970,7 @@ bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
 
     bool is_utf16_encoding = (encoding_name.find("UTF16") != std::string::npos || encoding_name.find("UCS2") != std::string::npos);
     if (!is_utf16_encoding) {
-        fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
+        // fill_missing_unicode_from_freetype(font_obj, cmap, diff_names);
     }
 
     cached_unicode_maps[font_obj_id] = std::make_shared<const std::unordered_map<int, WinUnicodeSequence>>(std::move(cmap));
