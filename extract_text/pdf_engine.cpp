@@ -153,6 +153,7 @@ static std::shared_mutex g_global_freetype_cache_mutex;
 struct CachedFreetypeData {
     std::shared_ptr<std::unordered_map<unsigned int, int>> gid_to_unicode;
     std::shared_ptr<std::unordered_map<std::string, unsigned int>> name_to_gid;
+    bool is_system_font = false;
 };
 static std::unordered_map<uint64_t, std::shared_ptr<CachedFreetypeData>> g_global_freetype_cache;
 
@@ -10756,6 +10757,7 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
     if (cached_data) {
         cached_gid_map = cached_data->gid_to_unicode;
         cached_name_map = cached_data->name_to_gid;
+        is_system_font = cached_data->is_system_font;
     } else {
         if (!font_bytes.empty()) {
             FT_New_Memory_Face(library, reinterpret_cast<const FT_Byte*>(font_bytes.data()), static_cast<FT_Long>(font_bytes.size()), 0, &face);
@@ -10817,6 +10819,7 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
         cached_data = std::make_shared<CachedFreetypeData>();
         cached_data->gid_to_unicode = cached_gid_map;
         cached_data->name_to_gid = cached_name_map;
+        cached_data->is_system_font = is_system_font;
         {
             std::unique_lock<std::shared_mutex> lock(g_global_freetype_cache_mutex);
             g_global_freetype_cache[font_hash] = cached_data;
