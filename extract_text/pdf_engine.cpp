@@ -10752,6 +10752,7 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
     std::shared_ptr<std::unordered_map<unsigned int, int>> cached_gid_map;
     std::shared_ptr<std::unordered_map<std::string, unsigned int>> cached_name_map;
 
+    bool is_system_font = false;
     if (cached_data) {
         cached_gid_map = cached_data->gid_to_unicode;
         cached_name_map = cached_data->name_to_gid;
@@ -10762,7 +10763,10 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
         if (!face) {
             std::vector<std::string> system_candidates = get_system_font_candidates(base_font_name);
             for (const std::string& candidate : system_candidates) {
-                if (FT_New_Face(library, candidate.c_str(), 0, &face) == 0) break;
+                if (FT_New_Face(library, candidate.c_str(), 0, &face) == 0) {
+                    is_system_font = true;
+                    break;
+                }
             }
         }
         if (!face) return;
@@ -10862,10 +10866,12 @@ void WinPdfDocument::fill_missing_unicode_from_freetype(const WinPdfObject& font
 
         int cp = -1;
         if (is_type0_subtype) {
-            FT_UInt gid = lookup_gid_for_code(code);
-            if (gid > 0) {
-                auto git = cached_gid_map->find(gid);
-                if (git != cached_gid_map->end()) cp = git->second;
+            if (!is_system_font) {
+                FT_UInt gid = lookup_gid_for_code(code);
+                if (gid > 0) {
+                    auto git = cached_gid_map->find(gid);
+                    if (git != cached_gid_map->end()) cp = git->second;
+                }
             }
         } else {
             auto diff_it = diff_names.find(code);
