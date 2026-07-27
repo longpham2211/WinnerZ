@@ -3,7 +3,11 @@
 #include <vector>
 #include <map>
 #include <cstdint>
+// fpdfview.h is only needed when building the Python wrapper with PDFium support.
+// In WASM builds (WINNERZ_WASM_BUILD=1) or when PDFium is disabled, skip it.
+#if !defined(WINNERZ_WASM_BUILD) && defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
 #include <fpdfview.h>
+#endif
 #include <functional>
 #include <memory>
 #include "../extract_text/pdf_engine.hpp"

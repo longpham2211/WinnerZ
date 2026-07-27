@@ -277,30 +277,100 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
 endif()
 
 if(EMSCRIPTEN)
-    # Build WASM wrapper using Embind
-    add_executable(winnerz_wasm wrapper_wasm/winnerz_wasm_wrapper.cpp)
-    
+    # ─── WASM build using Emscripten Embind ───────────────────────────────────
+    # Build command (run in WSL after sourcing emsdk_env.sh):
+    #   mkdir -p build-wasm && cd build-wasm
+    #   emcmake cmake .. -DWINNERZ_BUILD_PYTHON_WRAPPER=OFF
+    #   emmake make winnerz_wasm -j4
+    # Output goes to winnerz/js/winnerz_wasm.{js,wasm}
+    # ─────────────────────────────────────────────────────────────────────────
+
+    add_executable(winnerz_wasm wrapper_wasm/winnerz_wasm_embind.cpp)
+
     target_compile_features(winnerz_wasm PRIVATE cxx_std_17)
+
     target_include_directories(winnerz_wasm PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
     target_link_libraries(winnerz_wasm PRIVATE WinnerZ)
-    
-    # Set output name and suffix
-    set_target_properties(winnerz_wasm PROPERTIES 
+
+    # Output: winnerz/js/winnerz_wasm.js  +  winnerz/js/winnerz_wasm.wasm
+    set_target_properties(winnerz_wasm PROPERTIES
         OUTPUT_NAME "winnerz_wasm"
         SUFFIX ".js"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/js"
     )
-    
-    # Emscripten specific linker flags
-    target_link_options(winnerz_wasm PRIVATE 
-        "-lembind" 
-        "-sMODULARIZE=1" 
+
+    # Emscripten linker flags
+    target_link_options(winnerz_wasm PRIVATE
+        # Embind – exposes C++ classes to JS
+        "-lembind"
+
+        # Modularize output so it can be imported as an ES module or CommonJS
+        "-sMODULARIZE=1"
         "-sEXPORT_NAME=createWinnerzModule"
+
+        # WASM output
         "-sWASM=1"
+
+        # Allow heap to grow for large PDFs (up to 512 MB)
         "-sALLOW_MEMORY_GROWTH=1"
+        "-sMAXIMUM_MEMORY=536870912"  # 512 MB
+
+        # Initial memory (16 MB)
+        "-sINITIAL_MEMORY=16777216"
+
+        # No main() entry point – this is a library
+        "--no-entry"
+
+        # Export the module factory
+        "-sEXPORTED_RUNTIME_METHODS=['FS','HEAP8','HEAPU8']"
+
+        # Disable filesystem (we load PDFs from memory)
+        "-sFORCE_FILESYSTEM=0"
+
+        # Enable exception handling (needed for std::runtime_error)
+        "-fexceptions"
+        "-sDISABLE_EXCEPTION_CATCHING=0"
+
+        # Emscripten provided libraries (ports)
+        "-sUSE_FREETYPE=1"
+        "-sUSE_HARFBUZZ=1"
+        "-sUSE_ZLIB=1"
+        "-sUSE_LIBPNG=1"
+
+        # Generate separate .wasm file (better browser caching)
+        "-sSINGLE_FILE=0"
+    )
+
+    # Compile with exceptions enabled and Emscripten ports
+    target_compile_options(winnerz_wasm PRIVATE 
+        "-fexceptions"
+        "-sUSE_FREETYPE=1"
+        "-sUSE_HARFBUZZ=1"
+        "-sUSE_ZLIB=1"
+        "-sUSE_LIBPNG=1"
+    )
+
+    # In WASM, we do NOT use PDFium (no binaries), so skip pdfium features
+    target_compile_definitions(winnerz_wasm PRIVATE
+        WINNERZ_USE_PDFIUM_PREVIEW=0
+        WINNERZ_WASM_BUILD=1
+    )
+
+    # Copy outputs to winnerz/js for distribution
+    add_custom_command(TARGET winnerz_wasm POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/js"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE_DIR:winnerz_wasm>/winnerz_wasm.js"
+            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/js/winnerz_wasm.js"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE_DIR:winnerz_wasm>/winnerz_wasm.wasm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/winnerz/js/winnerz_wasm.wasm"
+        VERBATIM
     )
 endif()
+

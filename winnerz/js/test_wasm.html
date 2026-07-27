@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>WinnerZ WASM Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #e0e0e0;
+    }
+
+    h1 {
+      color: #00d4ff;
+    }
+
+    #status {
+      color: #ffd700;
+      margin: 10px 0;
+    }
+
+    #output {
+      white-space: pre-wrap;
+      background: #0f3460;
+      padding: 15px;
+      border-radius: 8px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    button {
+      background: #00d4ff;
+      color: #000;
+      border: none;
+      padding: 10px 20px;
+      margin: 5px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    input[type=file] {
+      margin: 10px 0;
+      color: #e0e0e0;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>🔷 WinnerZ WASM Test</h1>
+  <p id="status">⏳ Loading WASM module...</p>
+
+  <input type="file" id="pdfInput" accept=".pdf" disabled />
+  <br />
+  <button id="btnText" disabled>Extract Text (page 0)</button>
+  <button id="btnDict" disabled>Get Dict (page 0)</button>
+  <button id="btnBlocks" disabled>Get Blocks (page 0)</button>
+  <button id="btnAll" disabled>Extract All Text</button>
+  <br />
+  <p>Page count: <span id="pageCount">—</span></p>
+  <pre id="output">Load a PDF file to begin...</pre>
+
+  <script type="module">
+    import createWinnerzModule from './winnerz_wasm.js';
+    import { WinnerzPdf } from './winnerz_wrapper.js';
+
+    let W = null;
+    let currentPdf = null;
+
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    const pageCount = document.getElementById('pageCount');
+    const pdfInput = document.getElementById('pdfInput');
+
+    const btnText = document.getElementById('btnText');
+    const btnDict = document.getElementById('btnDict');
+    const btnBlocks = document.getElementById('btnBlocks');
+    const btnAll = document.getElementById('btnAll');
+
+    function setStatus(msg, color = '#ffd700') {
+      status.textContent = msg;
+      status.style.color = color;
+    }
+
+    function show(data) {
+      if (typeof data === 'object') {
+        output.textContent = JSON.stringify(data, null, 2);
+      } else {
+        output.textContent = String(data);
+      }
+    }
+
+    // ── Init WASM ─────────────────────────────────────────────────────────────────
+    try {
+      W = await createWinnerzModule();
+      setStatus('✅ WASM module loaded! Select a PDF file.', '#00ff88');
+      pdfInput.disabled = false;
+    } catch (e) {
+      setStatus('❌ Failed to load WASM: ' + e.message, '#ff4444');
+      console.error(e);
+    }
+
+    // ── File picker ───────────────────────────────────────────────────────────────
+    pdfInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (currentPdf) { currentPdf.close(); currentPdf = null; }
+
+      setStatus('⏳ Opening PDF...');
+      try {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+
+        const t0 = performance.now();
+        currentPdf = await WinnerzPdf.open(bytes);
+        const t1 = performance.now();
+
+        pageCount.textContent = currentPdf.pageCount;
+        setStatus(`✅ Opened "${file.name}" in ${(t1 - t0).toFixed(0)}ms — ${currentPdf.pageCount} pages`, '#00ff88');
+
+        [btnText, btnDict, btnBlocks, btnAll].forEach(b => b.disabled = false);
+        output.textContent = `File: ${file.name}\nPages: ${currentPdf.pageCount}\nEncrypted: ${currentPdf.isEncrypted}`;
+      } catch (err) {
+        setStatus('❌ Error opening PDF: ' + err.message, '#ff4444');
+        console.error(err);
+      }
+    });
+
+    // ── Buttons ───────────────────────────────────────────────────────────────────
+    btnText.addEventListener('click', () => {
+      if (!currentPdf) return;
+      const t0 = performance.now();
+      const text = currentPdf.getTextPlain(0);
+      const dt = (performance.now() - t0).toFixed(1);
+      show(`[Page 0 plain text — ${dt}ms]\n\n` + text);
+    });
+
+    btnDict.addEventListener('click', () => {
+      if (!currentPdf) return;
+      const t0 = performance.now();
+      const dict = currentPdf.getDict(0);
+      const dt = (performance.now() - t0).toFixed(1);
+      output.textContent = `[Page 0 dict — ${dt}ms]\n\n` + JSON.stringify(dict, null, 2);
+    });
+
+    btnBlocks.addEventListener('click', () => {
+      if (!currentPdf) return;
+      const t0 = performance.now();
+      const blocks = currentPdf.getBlocks(0);
+      const dt = (performance.now() - t0).toFixed(1);
+      output.textContent = `[Page 0 blocks — ${dt}ms, ${blocks.length} blocks]\n\n` + JSON.stringify(blocks, null, 2);
+    });
+
+    btnAll.addEventListener('click', () => {
+      if (!currentPdf) return;
+      const t0 = performance.now();
+      const text = currentPdf.getAllText();
+      const dt = (performance.now() - t0).toFixed(1);
+      show(`[All pages text — ${dt}ms]\n\n` + text);
+    });
+  </script>
+</body>
+
+</html>

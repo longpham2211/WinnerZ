@@ -58,3 +58,4 @@ experiment.py
 *.dylib
 test.py
 mupdf-master/
+test_wasm.html
