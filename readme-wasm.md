@@ -1,13 +1,13 @@
 # WinnerZ WASM API Documentation
 
-WinnerZ WASM provides a user-friendly JavaScript wrapper (`WinnerzPdf`) around the underlying WebAssembly (Emscripten) module. The API is designed to closely match the WinnerZ Python library while running entirely in the browser or Node.js.
+WinnerZ WASM provides a user-friendly JavaScript wrapper (`Winnerz`) around the underlying WebAssembly (Emscripten) module. The API is designed to closely match the WinnerZ Python library while running entirely in the browser or Node.js.
 
 ## 1. Import and Open a PDF
 
-Use the `WinnerzPdf` wrapper to load and interact with the WASM module:
+Use the `Winnerz` wrapper to load and interact with the WASM module:
 
 ```javascript
-import { WinnerzPdf } from './winnerz_wrapper.js';
+import { Winnerz } from './winnerz_wrapper.js';
 
 // Read the PDF file into a Uint8Array
 const response = await fetch('sample.pdf');
