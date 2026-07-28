@@ -33,21 +33,21 @@ fi
 
 # ── Verify emcmake is available ───────────────────────────────────────────────
 if ! command -v emcmake &> /dev/null; then
-    echo "❌ emcmake not found. Make sure emsdk is activated."
+    echo " emcmake not found. Make sure emsdk is activated."
     exit 1
 fi
-echo "✅ emcmake: $(emcmake --version 2>&1 | head -1)"
+echo "emcmake: $(emcmake --version 2>&1 | head -1)"
 
 # ── Fix missing xz-utils in WSL ───────────────────────────────────────────────
 # Harfbuzz is fetched via a .tar.xz file. Without xz-utils, CMake's FetchContent fails!
 if ! command -v xz &> /dev/null; then
-    echo "📦 Installing xz-utils (required for extracting .tar.xz)..."
+    echo "Installing xz-utils (required for extracting .tar.xz)..."
     sudo apt-get update && sudo apt-get install -y xz-utils
 fi
 
 # ── Configure ─────────────────────────────────────────────────────────────────
 echo ""
-echo "🔧 Configuring WASM build..."
+echo "Configuring WASM build..."
 mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"
 
