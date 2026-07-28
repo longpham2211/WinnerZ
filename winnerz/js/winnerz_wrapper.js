@@ -9,7 +9,7 @@
  *  - Parsing JSON responses back to JS objects
  *
  * APIs (mirrors Python winnerz API):
- *   Winnerz.open(pdfBytes) → WinnerzPdf
+ *   Winnerz.open(pdfBytes) → Winnerz
  *   pdf.pageCount, pdf.isEncrypted
  *   pdf.pageRect(i), pdf.getText(i, mode, sort)
  *   pdf.getTextPlain(i, sort), pdf.getDict(i, sort), pdf.getRawDict(i, sort)
@@ -23,8 +23,8 @@
  *   pdf.clearPageCache(), pdf.close()
  *
  * Usage (browser, ESM):
- *   import { WinnerzPdf } from './winnerz_wrapper.js';
- *   const pdf = await Winnerz.open(pdfBytes);
+ *   import { winnerz } from './winnerz_wrapper.js';
+ *   const pdf = await winnerz.open(pdfBytes);
  *   const text = pdf.getTextPlain(0);
  *   const page = pdf.getDict(0);
  *   pdf.close();
@@ -94,25 +94,25 @@ function stringToUint8Array(str) {
   return out;
 }
 
-// ─── WinnerzPdf – the friendly API class ─────────────────────────────────────
+// ─── Winnerz – the friendly API class ─────────────────────────────────────
 
 /**
  * Friendly wrapper around WasmDocument.
  * Mirrors the Python winnerz.Document API as closely as possible.
  */
-export class WinnerzPdf {
+export class winnerz {
   /**
    * Open a PDF from bytes.
    * @param {Uint8Array|ArrayBuffer} pdfData - Raw PDF bytes
    * @param {string} [wasmPath] - Optional path prefix for locating .wasm file
-   * @returns {Promise<WinnerzPdf>}
+   * @returns {Promise<winnerz>}
    */
   static async open(pdfData, wasmPath = '') {
     const W = await loadWinnerzModule(wasmPath);
     const bytes = pdfData instanceof Uint8Array ? pdfData : new Uint8Array(pdfData);
     const byteStr = uint8ArrayToString(bytes);
     const wasmDoc = new W.WasmDocument(byteStr);
-    return new WinnerzPdf(wasmDoc);
+    return new winnerz(wasmDoc);
   }
 
   /**
@@ -124,7 +124,7 @@ export class WinnerzPdf {
   }
 
   _assertOpen() {
-    if (this._closed) throw new Error('WinnerzPdf: document has been closed');
+    if (this._closed) throw new Error('Winnerz: document has been closed');
   }
 
   // ── Basic info ──────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ export class WinnerzPdf {
       case 'json': return this._doc.getJson(pageIndex, false, sort);
       case 'rawjson': return this._doc.getJson(pageIndex, true, sort);
       case 'blocks': return this.getBlocks(pageIndex, sort);
-      default: throw new Error(`WinnerzPdf: unknown text mode "${mode}"`);
+      default: throw new Error(`Winnerz: unknown text mode "${mode}"`);
     }
   }
 
@@ -350,7 +350,7 @@ export class WinnerzPdf {
    *   const W = await createWinnerzModule();
    *   W.FS.mkdir('/fonts');
    *   W.FS.writeFile('/fonts/MyFont-Bold.ttf', fontBytes);
-   *   const pdf = await Winnerz.open(pdfBytes);
+   *   const pdf = await winnerz.open(pdfBytes);
    *   const out = pdf.insertText({ 0: [{ ... font_family: 'MyFont-Bold' }] }, '/fonts');
    *
    * @param {Record<number, Array<{
@@ -407,7 +407,7 @@ export class WinnerzPdf {
   /**
    * Async-safe cleanup helper for use with try/finally.
    * @example
-   * using pdf = await Winnerz.open(bytes); // Stage-3 'using' proposal
+   * using pdf = await winnerz.open(bytes); // Stage-3 'using' proposal
    */
   [Symbol.dispose]() { this.close(); }
 }
@@ -423,7 +423,7 @@ export class WinnerzPdf {
  * @returns {Promise<string|object>}
  */
 export async function extractPage(pdfData, pageIndex = 0, mode = 'text', sort = false) {
-  const pdf = await Winnerz.open(pdfData);
+  const pdf = await winnerz.open(pdfData);
   try {
     return pdf.getText(pageIndex, mode, sort);
   } finally {
