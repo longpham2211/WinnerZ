@@ -60,3 +60,4 @@ test.py
 mupdf-master/
 test_wasm.html
 build_wasm.sh
+readme-wasm.md

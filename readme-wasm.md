@@ -1,99 +1,107 @@
 # WinnerZ WASM API Documentation
 
-WinnerZ WASM cung cấp một lớp wrapper thân thiện (`WinnerzPdf`) bằng JavaScript, đóng gói WebAssembly (Emscripten). API này được thiết kế để giống hệt với thư viện WinnerZ trên Python, nhưng chạy hoàn toàn trên trình duyệt hoặc Node.js.
+WinnerZ WASM provides a user-friendly JavaScript wrapper (`WinnerzPdf`) around the underlying WebAssembly (Emscripten) module. The API is designed to closely match the WinnerZ Python library while running entirely in the browser or Node.js.
 
-## 1. Import và Mở file PDF
+## 1. Import and Open a PDF
 
-Bạn cần sử dụng wrapper `WinnerzPdf` để load và giao tiếp với WASM:
+Use the `WinnerzPdf` wrapper to load and interact with the WASM module:
 
 ```javascript
 import { WinnerzPdf } from './winnerz_wrapper.js';
 
-// Đọc file PDF thành mảng byte (Uint8Array)
+// Read the PDF file into a Uint8Array
 const response = await fetch('sample.pdf');
 const pdfBytes = new Uint8Array(await response.arrayBuffer());
 
-// Khởi tạo đối tượng PDF (Tự động tải WASM module)
-const pdf = await WinnerzPdf.open(pdfBytes);
+// Create a PDF instance (automatically loads the WASM module)
+const pdf = await Winnerz.open(pdfBytes);
 ```
 
-## 2. Các thuộc tính cơ bản
+## 2. Basic Properties
 
-- `pdf.pageCount`: (Number) Tổng số trang của file PDF.
-- `pdf.isEncrypted`: (Boolean) File PDF có bị mã hóa (đặt mật khẩu) hay không.
+- `pdf.pageCount`: (Number) Total number of pages in the PDF.
+- `pdf.isEncrypted`: (Boolean) Indicates whether the PDF is password-protected.
 
-## 3. Các hàm trích xuất dữ liệu (Extract)
+## 3. Data Extraction APIs
 
-Tất cả chỉ số trang (`page_index`) đều bắt đầu từ **0**.
+All page indices (`page_index`) are **zero-based**.
 
-### Lấy kích thước trang
+### Get Page Dimensions
+
 ```javascript
 const rect = pdf.pageRect(page_index);
-// Trả về: { x0, y0, x1, y1 }
+// Returns: { x0, y0, x1, y1 }
 ```
 
-### Lấy Text (Văn bản thô)
+### Extract Plain Text
+
 ```javascript
-// Lấy text của 1 trang cụ thể (có hỗ trợ cờ sắp xếp sort=true)
+// Get the text from a specific page (supports reading-order sorting with sort=true)
 const text = pdf.getTextPlain(page_index, true);
 
-// Lấy text của tất cả các trang
+// Get the text from all pages
 const allText = pdf.getAllText();
 ```
 
-### Lấy dữ liệu Dictionaries (JSON)
-Lấy dữ liệu cấu trúc chi tiết (vị trí tọa độ, font chữ, màu sắc) của từng ký tự / từ.
+### Extract Dictionary Data (JSON)
+
+Retrieve detailed structured data, including coordinates, font information, and colors for each character or word.
+
 ```javascript
-// Lấy Dict rút gọn (gom nhóm ký tự thành dòng)
+// Get the simplified dictionary (characters grouped into text lines)
 const dict = pdf.getDict(page_index, true);
 
-// Lấy Dict đầy đủ dạng Raw (từng ký tự rời rạc)
+// Get the raw dictionary (individual characters)
 const rawDict = pdf.getRawDict(page_index, true);
 
-// Lấy toàn bộ Dictionaries của mọi trang
-const allDicts = pdf.getAllDicts(false, true); 
-// - includeChars: bao gồm bounding box của từng ký tự riêng lẻ không
-// - sort: sắp xếp theo luồng đọc từ trên xuống, trái sang phải
+// Get dictionaries for all pages
+const allDicts = pdf.getAllDicts(false, true);
+// - includeChars: whether to include bounding boxes for individual characters
+// - sort: sort the output in reading order (top-to-bottom, left-to-right)
 ```
 
-### Lấy Blocks
+### Get Text Blocks
+
 ```javascript
-// Lấy danh sách các khối (block) văn bản
+// Get the list of text blocks on a page
 const blocks = pdf.getBlocks(page_index, true);
 ```
 
-### Lấy thông tin Fonts
+### Get Font Information
+
 ```javascript
-// Trả về mảng danh sách tên Font (basename) được dùng trên trang
+// Returns an array of font base names used on the page
 const fonts = pdf.getPageFontBasenames(page_index);
 ```
 
-## 4. Các hàm chỉnh sửa (Redact & Insert)
+## 4. PDF Editing APIs (Redact & Insert)
 
-Các hàm này thay đổi cấu trúc PDF và trả về một file PDF mới dưới dạng `Uint8Array`. Chúng chạy bằng C++ thuần (không cần PDFium) nên hoạt động tốt trên môi trường WASM.
+These APIs modify the PDF structure and return a new PDF as a `Uint8Array`. They are implemented in native C++ and do not rely on PDFium, making them fully compatible with WebAssembly environments.
 
-### Xóa dữ liệu nhạy cảm (Redact)
-Che và xóa nội dung văn bản bên dưới một vùng hình chữ nhật.
+### Redact Sensitive Content
+
+Cover and permanently remove the underlying text within one or more rectangular regions.
 
 ```javascript
-// Cấu trúc của rects: [{ x0, y0, x1, y1, color: [r, g, b] }, ...]
+// Rectangle format: [{ x0, y0, x1, y1, color: [r, g, b] }, ...]
 const rects = [
-  { x0: 50, y0: 100, x1: 200, y1: 120, color: [0, 0, 0] } // Che khối đen
+  { x0: 50, y0: 100, x1: 200, y1: 120, color: [0, 0, 0] } // Black redaction box
 ];
 
-// Redact trên 1 trang
+// Redact a single page
 const newPdfBytes1 = pdf.redactPage(0, rects);
 
-// Redact trên nhiều trang cùng lúc
-// Cấu trúc pageRectsMap: { "page_index": [rect1, rect2], "page_index_2": [...] }
+// Redact multiple pages
+// pageRectsMap format: { "page_index": [rect1, rect2], "page_index_2": [...] }
 const newPdfBytes2 = pdf.redactPages({
   "0": rects,
   "2": rects
 });
 ```
 
-### Chèn Hình chữ nhật (Insert Rects)
-Vẽ thêm hình chữ nhật đè lên PDF.
+### Insert Rectangles
+
+Draw one or more rectangles on top of the PDF.
 
 ```javascript
 const pagesTasksMap = {
@@ -105,8 +113,9 @@ const pagesTasksMap = {
 const modifiedBytes = pdf.insertRects(pagesTasksMap);
 ```
 
-### Chèn Văn bản (Insert Text)
-Vẽ thêm chữ mới vào PDF. Cần thư mục font chữ (ảo hóa nếu chạy trên trình duyệt).
+### Insert Text
+
+Draw new text onto the PDF. A font directory is required (virtualized when running in the browser).
 
 ```javascript
 const textTasks = {
@@ -124,18 +133,18 @@ const textTasks = {
   ]
 };
 
-// Truyền kèm đường dẫn thư mục chứa font 
+// Pass the path to the font directory
 const finalPdfBytes = pdf.insertText(textTasks, "/fonts");
 ```
 
-## 5. Dọn dẹp bộ nhớ (Cleanup)
+## 5. Memory Cleanup
 
-WASM không có Garbage Collector tự động dọn dẹp các class C++. **Rất quan trọng:** Bạn luôn phải gọi hàm `close()` sau khi dùng xong file PDF để giải phóng bộ nhớ (tránh memory leak trên trình duyệt).
+WebAssembly does not automatically garbage collect underlying C++ objects. **Important:** Always call `close()` after you are finished using a PDF to release native resources and prevent memory leaks, especially in browser environments.
 
 ```javascript
-// Xóa cache của trang (giảm RAM tạm thời)
+// Clear the page cache to reduce temporary memory usage
 pdf.clearPageCache();
 
-// Hủy hoàn toàn đối tượng PDF (Bắt buộc gọi khi không dùng nữa)
+// Destroy the PDF object (must be called when finished)
 pdf.close();
 ```

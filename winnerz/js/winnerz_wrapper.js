@@ -9,7 +9,7 @@
  *  - Parsing JSON responses back to JS objects
  *
  * APIs (mirrors Python winnerz API):
- *   WinnerzPdf.open(pdfBytes) → WinnerzPdf
+ *   Winnerz.open(pdfBytes) → WinnerzPdf
  *   pdf.pageCount, pdf.isEncrypted
  *   pdf.pageRect(i), pdf.getText(i, mode, sort)
  *   pdf.getTextPlain(i, sort), pdf.getDict(i, sort), pdf.getRawDict(i, sort)
@@ -24,7 +24,7 @@
  *
  * Usage (browser, ESM):
  *   import { WinnerzPdf } from './winnerz_wrapper.js';
- *   const pdf = await WinnerzPdf.open(pdfBytes);
+ *   const pdf = await Winnerz.open(pdfBytes);
  *   const text = pdf.getTextPlain(0);
  *   const page = pdf.getDict(0);
  *   pdf.close();
@@ -226,12 +226,12 @@ export class WinnerzPdf {
   getText(pageIndex, mode = 'dict', sort = false) {
     this._assertOpen();
     switch (mode) {
-      case 'text':    return this.getTextPlain(pageIndex, sort);
-      case 'dict':    return this.getDict(pageIndex, sort);
+      case 'text': return this.getTextPlain(pageIndex, sort);
+      case 'dict': return this.getDict(pageIndex, sort);
       case 'rawdict': return this.getRawDict(pageIndex, sort);
-      case 'json':    return this._doc.getJson(pageIndex, false, sort);
+      case 'json': return this._doc.getJson(pageIndex, false, sort);
       case 'rawjson': return this._doc.getJson(pageIndex, true, sort);
-      case 'blocks':  return this.getBlocks(pageIndex, sort);
+      case 'blocks': return this.getBlocks(pageIndex, sort);
       default: throw new Error(`WinnerzPdf: unknown text mode "${mode}"`);
     }
   }
@@ -350,7 +350,7 @@ export class WinnerzPdf {
    *   const W = await createWinnerzModule();
    *   W.FS.mkdir('/fonts');
    *   W.FS.writeFile('/fonts/MyFont-Bold.ttf', fontBytes);
-   *   const pdf = await WinnerzPdf.open(pdfBytes);
+   *   const pdf = await Winnerz.open(pdfBytes);
    *   const out = pdf.insertText({ 0: [{ ... font_family: 'MyFont-Bold' }] }, '/fonts');
    *
    * @param {Record<number, Array<{
@@ -373,13 +373,13 @@ export class WinnerzPdf {
         Object.entries(pageTasksMap).map(([k, tasks]) => [
           String(k),
           tasks.map(t => ({
-            text:        t.text ?? '',
-            rect:        t.rect,
-            size:        t.size ?? 12,
-            color:       t.color ?? [0, 0, 0],
-            bold:        t.bold ?? false,
-            italic:      t.italic ?? false,
-            multiline:   t.multiline ?? false,
+            text: t.text ?? '',
+            rect: t.rect,
+            size: t.size ?? 12,
+            color: t.color ?? [0, 0, 0],
+            bold: t.bold ?? false,
+            italic: t.italic ?? false,
+            multiline: t.multiline ?? false,
             font_family: t.font_family ?? ''
           }))
         ])
@@ -407,7 +407,7 @@ export class WinnerzPdf {
   /**
    * Async-safe cleanup helper for use with try/finally.
    * @example
-   * using pdf = await WinnerzPdf.open(bytes); // Stage-3 'using' proposal
+   * using pdf = await Winnerz.open(bytes); // Stage-3 'using' proposal
    */
   [Symbol.dispose]() { this.close(); }
 }
@@ -423,7 +423,7 @@ export class WinnerzPdf {
  * @returns {Promise<string|object>}
  */
 export async function extractPage(pdfData, pageIndex = 0, mode = 'text', sort = false) {
-  const pdf = await WinnerzPdf.open(pdfData);
+  const pdf = await Winnerz.open(pdfData);
   try {
     return pdf.getText(pageIndex, mode, sort);
   } finally {
