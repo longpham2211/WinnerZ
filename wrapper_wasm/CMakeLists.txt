@@ -81,6 +81,7 @@ target_link_options(winnerz_wasm PRIVATE
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createWinnerzModule"
     "-sWASM=1"
+    "-sSTACK_SIZE=5242880"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sMAXIMUM_MEMORY=536870912"
     "-sINITIAL_MEMORY=16777216"

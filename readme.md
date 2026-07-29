@@ -78,6 +78,7 @@ Represents a PDF document instance. It manages the lifecycle of the underlying f
 *   `insert_rects_json(json_str)`: Native C++ parallel rendering for colored rectangles (useful for background patching/redaction). Maps page indices to bounding boxes and RGB colors via JSON. Injects raw vector PDF streams (`re`, `f`) directly, bypassing slow PyMuPDF loops and Pillow image conversions. Highly recommended to pad bounding boxes by ~2 points to ensure full artifact coverage.
 *   `redact_pages_bytes(page_rects_map)`: (Native C++) Performs parallel Block Redaction across multiple pages and returns the cleaned PDF as `bytes` directly in RAM. Use with caution on very large files to avoid memory pressure.
 *   `get_page_font_basenames(page_index=0)`: Extracts the true BaseFont name (e.g., 'TimesNewRomanPS-BoldMT') from internal PDF resource identifiers (e.g., 'R14') by automatically stripping subset prefixes ('ABCDEF+'). Crucial for accurate font mapping and reconstruction.
+
 *   `close()`: Cleans up temporary resources, such as decrypted temporary files and in-memory editing buffers.
 
 ### Page

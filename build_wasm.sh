@@ -2,14 +2,6 @@
 # build_wasm.sh
 # Build WinnerZ WASM module using Emscripten in WSL.
 # Run this script from the repo root inside WSL.
-#
-# Prerequisites (first-time only):
-#   git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
-#   cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest
-#   source ~/emsdk/emsdk_env.sh
-#
-# Then just run:
-#   bash build_wasm.sh
 
 set -e
 
@@ -39,7 +31,6 @@ fi
 echo "emcmake: $(emcmake --version 2>&1 | head -1)"
 
 # ── Fix missing xz-utils in WSL ───────────────────────────────────────────────
-# Harfbuzz is fetched via a .tar.xz file. Without xz-utils, CMake's FetchContent fails!
 if ! command -v xz &> /dev/null; then
     echo "Installing xz-utils (required for extracting .tar.xz)..."
     sudo apt-get update && sudo apt-get install -y xz-utils
@@ -56,7 +47,9 @@ rm -rf CMakeCache.txt CMakeFiles/
 
 emcmake cmake "${REPO_ROOT}/wrapper_wasm" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_STANDARD=17
+    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_CXX_FLAGS="-O3" \
+    -DCMAKE_EXE_LINKER_FLAGS="-O3 --no-entry -s STACK_SIZE=5242880 -s ALLOW_MEMORY_GROWTH=1 -s DISABLE_EXCEPTION_CATCHING=0 -s EXPORT_ES6=1 -s MODULARIZE=1"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo ""
@@ -73,17 +66,11 @@ if [ -f "${JS_OUT}" ] && [ -f "${WASM_OUT}" ]; then
     JS_SIZE=$(du -sh "${JS_OUT}" | cut -f1)
     WASM_SIZE=$(du -sh "${WASM_OUT}" | cut -f1)
     echo "Build successful!"
-    echo " winnerz_wasm.js   : ${JS_SIZE}"
-    echo " winnerz_wasm.wasm : ${WASM_SIZE}"
+    echo " winnerz_wasm.js        : ${JS_SIZE}"
+    echo " winnerz_wasm.wasm      : ${WASM_SIZE}"
     echo ""
     echo "Output: ${REPO_ROOT}/winnerz/js/"
     echo ""
-    echo "Usage in browser:"
-    echo '  import createWinnerzModule from "./winnerz_wasm.js";'
-    echo '  import { WinnerzPdf } from "./winnerz_wrapper.js";'
-    echo '  const pdf = await WinnerzPdf.open(pdfBytes);'
-    echo '  console.log(pdf.getTextPlain(0));'
-    echo '  pdf.close();'
 else
     echo "Build FAILED – output files not found!"
     echo "   Expected:"
