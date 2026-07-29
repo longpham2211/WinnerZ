@@ -35,17 +35,20 @@ add_library(WinnerZ_WASM_Lib STATIC
     ../extract_text/micro_ocr.cpp
     ../extract_text/pdf_font_metrics.cpp
     ../insert_text/insert.cpp
+    ../src/preview_pdf.cpp
+    ../src/drawing.cpp
 )
 
 target_include_directories(WinnerZ_WASM_Lib PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../redactor"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../extract_text"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third-party/pdfium/include"
 )
 
-# KHÔNG build kèm PDFium vì WASM không hỗ trợ binaries của PDFium
+# Bật PDFium Preview
 target_compile_definitions(WinnerZ_WASM_Lib PUBLIC
-    WINNERZ_USE_PDFIUM_PREVIEW=0
+    WINNERZ_USE_PDFIUM_PREVIEW=1
     WINNERZ_WASM_BUILD=1
     WINEXTRACT_USE_FREETYPE=1
 )
@@ -69,7 +72,10 @@ target_include_directories(winnerz_wasm PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
 )
 
-target_link_libraries(winnerz_wasm PRIVATE WinnerZ_WASM_Lib)
+target_link_libraries(winnerz_wasm PRIVATE 
+    WinnerZ_WASM_Lib
+    "${CMAKE_CURRENT_SOURCE_DIR}/../winnerz/js/libpdfium-wasm.a"
+)
 
 set_target_properties(winnerz_wasm PROPERTIES
     OUTPUT_NAME "winnerz_wasm"

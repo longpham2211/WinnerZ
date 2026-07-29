@@ -406,23 +406,18 @@ try {
 
 ---
 
-## 12. Rendering & Vector Graphics (via PDFium JS Wrapper)
+## 12. Rendering & Vector Graphics (PDFium Enabled)
 
-WinnerZ WASM can render pages to images by integrating with a standalone PDFium JavaScript WebAssembly package (`index.js` & `pdfium.wasm`). 
-
-> **Important Setup:** You must place the `index.js` and `pdfium.wasm` files (from the pdfium-wasm package) in the same directory as your script so that `winnerz_wrapper.js` can import them dynamically when `get_pixmap()` is called.
+Unlike many lightweight WASM ports, WinnerZ WASM includes the PDFium engine, enabling browser-native page rendering and vector path extraction.
 
 ### Render Page to Image (Pixmap)
-
-Because it dynamically loads the PDFium module, `get_pixmap` is **asynchronous** and returns a Promise.
 
 ```javascript
 // JavaScript
 const scale = 1.5; // Zoom scale factor (default is 1.0)
 const clip = null; // Alternatively, provide [x0, y0, x1, y1] for cropping
 
-// MUST use await because it loads PDFium JS
-const pixmap = await doc[0].get_pixmap(scale, clip);
+const pixmap = doc[0].get_pixmap(scale, clip);
 console.log(`Rendered: ${pixmap.width}x${pixmap.height} at ${pixmap.channels} channels`);
 
 // The raw image bytes (RGBA) can be drawn directly to an HTML5 Canvas:
@@ -439,9 +434,13 @@ const imageData = new ImageData(
 
 ```javascript
 // JavaScript
-// NOTE: get_drawings() is NOT supported in the JS-only PDFium approach.
-// It requires deep C++ path parsing logic (Cách 1). Calling this will throw an Error.
-// const drawings = doc[0].get_drawings(); 
+const drawings = doc[0].get_drawings();
+for (const path of drawings) {
+  console.log("Path Type:", path.type);
+  console.log("Fill Color:", path.fill_color);
+  console.log("Stroke Color:", path.stroke_color);
+}
+
 ```
 
 ---
@@ -531,8 +530,8 @@ const dict = await winnerz.extract_page(pdfBytes, 0, 'dict');
 | `page.get_text('dict')` | `page.get_text('dict')` |
 | `page.get_text('rawdict')` | `page.get_text('rawdict')` |
 | `page.get_text('blocks')` | `page.get_text('blocks')` |
-| `page.get_drawings()` | `(Not supported in JS mode)` |
-| `page.get_pixmap(scale, clip)` | `await page.get_pixmap(scale, clip)` |
+| `page.get_drawings()` | `page.get_drawings()` |
+| `page.get_pixmap(scale, clip)` | `page.get_pixmap(scale, clip)` |
 | `page.redact_text(rects, path)` | `page.redact_text(rects)` → `Uint8Array` |
 | `doc.get_all_text()` | `doc.get_all_text()` |
 | `doc.get_all_dicts_json(ic, sort)` | `doc.get_all_dicts_json(ic, sort)` |

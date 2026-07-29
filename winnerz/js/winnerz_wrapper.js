@@ -22,25 +22,6 @@ let _wasmModule = null;
  * @param {string} [wasmPath] - Optional path prefix for locating winnerz_wasm.wasm
  * @returns {Promise<object>}
  */
-let _pdfiumPromise = null;
-let _pdfiumModule = null;
-
-async function load_pdfium_module() {
-  if (_pdfiumModule) return _pdfiumModule;
-  if (_pdfiumPromise) return _pdfiumPromise;
-
-  _pdfiumPromise = (async () => {
-    // Dynamically import the user-provided pdfium wrapper
-    const factory = (await import('./index.js')).default || (await import('./index.js')).createPdfium;
-    // We assume factory is a function returning the Module
-    _pdfiumModule = await factory();
-    _pdfiumModule.ccall('FPDF_InitLibrary', 'void', [], []);
-    return _pdfiumModule;
-  })();
-
-  return _pdfiumPromise;
-}
-
 export async function load_winnerz_module(wasmPath = '') {
   if (_wasmModule) return _wasmModule;
   if (_modulePromise) return _modulePromise;
@@ -150,111 +131,18 @@ export class Page {
    * Requires PDFium enabled in WASM build.
    */
   get_drawings() {
-    throw new Error("Winnerz: get_drawings() requires C++ PDFium integration (Cách 1). The JS-only PDFium approach currently does not support get_drawings() as it requires complex C++ path parsing.");
+    return this._doc._raw.getDrawings(this.index);
   }
 
   /**
    * Render page to image/pixmap. Python: page.get_pixmap()
-   * Implemented using standalone PDFium JS WASM module.
+   * Requires PDFium enabled in WASM build.
    * @param {number} scale Zoom level (default: 1.0)
    * @param {Array<number>|null} clip [x0, y0, x1, y1] crop box
-   * @returns {Promise<{width: number, height: number, channels: number, stride: number, samples: Uint8Array}>}
+   * @returns {{width: number, height: number, channels: number, stride: number, samples: Uint8Array}}
    */
-  async get_pixmap(scale = 1.0, clip = null) {
-    const pdfium = await load_pdfium_module();
-    const pdfBytes = this._doc.tobytes();
-
-    // Allocate memory in PDFium WASM for the PDF file
-    const pdfPtr = pdfium._malloc(pdfBytes.length);
-    pdfium.HEAPU8.set(pdfBytes, pdfPtr);
-
-    // Load document
-    const docPtr = pdfium.ccall('FPDF_LoadMemDocument64', 'number', ['number', 'number', 'string'], [pdfPtr, pdfBytes.length, ""]);
-    if (!docPtr) {
-        pdfium._free(pdfPtr);
-        throw new Error("Failed to load PDF document in PDFium");
-    }
-
-    // Load page
-    const pagePtr = pdfium.ccall('FPDF_LoadPage', 'number', ['number', 'number'], [docPtr, this.index]);
-    if (!pagePtr) {
-        pdfium.ccall('FPDF_CloseDocument', 'void', ['number'], [docPtr]);
-        pdfium._free(pdfPtr);
-        throw new Error("Failed to load page in PDFium");
-    }
-
-    // Get original page size
-    const width = pdfium.ccall('FPDF_GetPageWidth', 'number', ['number'], [pagePtr]);
-    const height = pdfium.ccall('FPDF_GetPageHeight', 'number', ['number'], [pagePtr]);
-
-    let cropX = 0, cropY = 0;
-    let cropW = width, cropH = height;
-
-    if (clip && clip.length === 4) {
-        cropX = clip[0];
-        cropY = clip[1];
-        cropW = clip[2] - clip[0];
-        cropH = clip[3] - clip[1];
-    }
-
-    // Scaled dimensions
-    const renderWidth = Math.floor(cropW * scale);
-    const renderHeight = Math.floor(cropH * scale);
-
-    // Create Bitmap
-    // FPDFBitmap_CreateEx(width, height, format=4 (BGRA), first_scan=0, stride=0)
-    const FPDFBitmap_BGRA = 4;
-    const bitmapPtr = pdfium.ccall('FPDFBitmap_CreateEx', 'number', ['number', 'number', 'number', 'number', 'number'], [renderWidth, renderHeight, FPDFBitmap_BGRA, 0, 0]);
-
-    if (!bitmapPtr) {
-        pdfium.ccall('FPDF_ClosePage', 'void', ['number'], [pagePtr]);
-        pdfium.ccall('FPDF_CloseDocument', 'void', ['number'], [docPtr]);
-        pdfium._free(pdfPtr);
-        throw new Error("Failed to create bitmap in PDFium");
-    }
-
-    // Fill white background (0xFFFFFFFF)
-    pdfium.ccall('FPDFBitmap_FillRect', 'void', ['number', 'number', 'number', 'number', 'number', 'number'], [bitmapPtr, 0, 0, renderWidth, renderHeight, 0xFFFFFFFF]);
-
-    // Render page
-    // FPDF_RenderPageBitmap(bitmap, page, start_x, start_y, size_x, size_y, rotate, flags)
-    // FPDF_ANNOT = 0x01, FPDF_LCD_TEXT = 0x02
-    const startX = Math.floor(-cropX * scale);
-    const startY = Math.floor(-cropY * scale);
-    const sizeX = Math.floor(width * scale);
-    const sizeY = Math.floor(height * scale);
-    pdfium.ccall('FPDF_RenderPageBitmap', 'void', ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'], [bitmapPtr, pagePtr, startX, startY, sizeX, sizeY, 0, 0x01 | 0x02]);
-
-    // Extract pixel data
-    const bufferPtr = pdfium.ccall('FPDFBitmap_GetBuffer', 'number', ['number'], [bitmapPtr]);
-    const stride = pdfium.ccall('FPDFBitmap_GetStride', 'number', ['number'], [bitmapPtr]);
-
-    // BGRA -> RGBA conversion
-    const numBytes = stride * renderHeight;
-    const pixels = new Uint8Array(numBytes);
-    const sourcePixels = pdfium.HEAPU8.subarray(bufferPtr, bufferPtr + numBytes);
-    
-    // Copy and convert BGRA to RGBA
-    for (let i = 0; i < numBytes; i += 4) {
-        pixels[i] = sourcePixels[i + 2];     // R
-        pixels[i + 1] = sourcePixels[i + 1]; // G
-        pixels[i + 2] = sourcePixels[i];     // B
-        pixels[i + 3] = sourcePixels[i + 3]; // A
-    }
-
-    // Cleanup
-    pdfium.ccall('FPDFBitmap_Destroy', 'void', ['number'], [bitmapPtr]);
-    pdfium.ccall('FPDF_ClosePage', 'void', ['number'], [pagePtr]);
-    pdfium.ccall('FPDF_CloseDocument', 'void', ['number'], [docPtr]);
-    pdfium._free(pdfPtr);
-
-    return {
-        width: renderWidth,
-        height: renderHeight,
-        channels: 4,
-        stride: stride,
-        samples: pixels
-    };
+  get_pixmap(scale = 1.0, clip = null) {
+    return this._doc._raw.renderPage(this.index, scale, clip);
   }
 }
 

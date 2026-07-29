@@ -162,7 +162,7 @@ export declare class Page {
   get_drawings(): WasmDrawingItem[];
 
   /** Render trang PDF ra hình ảnh (Pixel data) */
-  get_pixmap(scale?: number, clip?: [number, number, number, number] | null): Promise<WasmRenderedPage>;
+  get_pixmap(scale?: number, clip?: [number, number, number, number] | null): WasmRenderedPage;
 }
 
 export declare class Document {
