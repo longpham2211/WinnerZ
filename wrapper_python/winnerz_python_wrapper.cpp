@@ -1150,6 +1150,43 @@ static py::list ExtractDrawingsToPyList(const std::string& pdf_path, int page_in
             stroke_color["alpha"] = d.stroke_color.alpha;
             item["stroke_color"] = stroke_color;
         }
+        item["ctm"] = py::make_tuple(d.ctm.a, d.ctm.b, d.ctm.c, d.ctm.d, d.ctm.e, d.ctm.f);
+        
+        py::list path_list;
+        for (const auto& el : d.path.elements) {
+            py::dict path_el;
+            path_el["cmd"] = (int)el.cmd;
+            py::list pts;
+            int num_pts = 0;
+            if (el.cmd == Winnerz::WzPathCmd::MoveTo || el.cmd == Winnerz::WzPathCmd::LineTo) num_pts = 1;
+            else if (el.cmd == Winnerz::WzPathCmd::QuadTo) num_pts = 2;
+            else if (el.cmd == Winnerz::WzPathCmd::CurveTo) num_pts = 3;
+            
+            for (int k = 0; k < num_pts; ++k) {
+                pts.append(py::make_tuple(el.pts[k].x, el.pts[k].y));
+            }
+            path_el["pts"] = pts;
+            path_list.append(path_el);
+        }
+        item["path"] = path_list;
+        
+        if (d.type == "stroke") {
+            py::dict stroke_dict;
+            stroke_dict["line_width"] = d.stroke.line_width;
+            stroke_dict["start_cap"] = (int)d.stroke.start_cap;
+            stroke_dict["dash_cap"] = (int)d.stroke.dash_cap;
+            stroke_dict["end_cap"] = (int)d.stroke.end_cap;
+            stroke_dict["line_join"] = (int)d.stroke.line_join;
+            stroke_dict["miter_limit"] = d.stroke.miter_limit;
+            stroke_dict["dash_phase"] = d.stroke.dash_phase;
+            py::list dashes;
+            for (float dash : d.stroke.dashes) {
+                dashes.append(dash);
+            }
+            stroke_dict["dashes"] = dashes;
+            item["stroke"] = stroke_dict;
+        }
+
         out.append(item);
     }
 

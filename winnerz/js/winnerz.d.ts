@@ -27,7 +27,7 @@ export interface WasmSpan {
   size: number;
   ascender: number;
   descender: number;
-  color: number;
+  color: string;
   flags: number;
   chars?: WasmChar[];
 }
@@ -42,7 +42,11 @@ export interface WasmLine {
 export interface WasmBlock {
   type: 0 | 1;
   bbox: BBox;
-  lines: WasmLine[];
+  lines?: WasmLine[]; // type 0
+  width?: number;     // type 1
+  height?: number;    // type 1
+  ext?: string;       // type 1
+  image?: string;     // type 1
 }
 
 export interface WasmPageDict {
@@ -126,9 +130,21 @@ export interface WasmDocument {
   delete(): void;
 }
 
+export interface WasmPdfiumEditorDoc {
+  import_pages(src: WasmPdfiumEditorDoc, pageRange: string): void;
+  save(incremental?: boolean): Uint8Array;
+  clean_contents(pageIndex: number): void;
+  insert_image_rgba(pageIndex: number, width: number, height: number, rgbaBytes: Uint8Array, rect: [number, number, number, number]): void;
+  optimize(maxDpi: number, jpegQuality: number): void;
+  close(): void;
+  delete(): void;
+}
+
 export interface WinnerzModule {
   // Constructor nhận Uint8Array thay vì string
   Document: new (pdfBytes: Uint8Array) => WasmDocument;
+  /** PDFium editor (chỉ khi WINNERZ_USE_PDFIUM_PREVIEW=1) */
+  PdfiumEditorDoc?: new (pdfBytes?: Uint8Array) => WasmPdfiumEditorDoc;
   FS: {
     mkdir(path: string): void;
     writeFile(path: string, data: Uint8Array | string): void;
@@ -162,7 +178,7 @@ export declare class Page {
   get_drawings(): WasmDrawingItem[];
 
   /** Render trang PDF ra hình ảnh (Pixel data) */
-  get_pixmap(scale?: number, clip?: [number, number, number, number] | null): WasmRenderedPage;
+  get_pixmap(options?: number | { scale?: number, clip?: [number, number, number, number] | null, hide_text?: boolean }, clip?: [number, number, number, number] | null): WasmRenderedPage;
 }
 
 export declare class Document {
@@ -205,7 +221,7 @@ export declare class Document {
     font_family?: string;
   }>>, fonts_dir?: string): Uint8Array;
 
-  /** Căn lề chữ (Fit spacing mode) */
+  /** Chèn ảnh RGBA vào trang */
   insert_text_fit_spacing_json(page_tasks_map: Record<number, Array<{
     text: string;
     rect: [number, number, number, number];
@@ -222,11 +238,76 @@ export declare class Document {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// 3b. PdfiumEditorDoc — High-level wrapper cho WasmPdfiumEditorDoc
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export declare class PdfiumEditorDoc {
+  /** Load PDF từ bytes. */
+  static create(pdfData: Uint8Array | ArrayBuffer, wasmPath?: string): Promise<PdfiumEditorDoc>;
+  /** Tạo tài liệu PDF rỗng. */
+  static create_empty(wasmPath?: string): Promise<PdfiumEditorDoc>;
+
+  /**
+   * Ghép trang từ tài liệu nguồn vào tài liệu hiện tại.
+   * @param srcEditor  Tài liệu nguồn
+   * @param pageRange  Chuỗi range trang (VD: "1,3,5-7"). Rỗng = toàn bộ.
+   */
+  import_pages(srcEditor: PdfiumEditorDoc, pageRange?: string): void;
+
+  /**
+   * Xuất tài liệu ra bytes PDF.
+   * @param incremental Lưu kiểu incremental (nhanh, file lớn hơn)
+   */
+  save(incremental?: boolean): Uint8Array;
+
+  /**
+   * Xoá toàn bộ nội dung (objects) trong một trang.
+   */
+  clean_contents(pageIndex: number): void;
+
+  /**
+   * Chèn ảnh RGBA vào một vị trí trên trang.
+   * @param pageIndex  Chỉ số trang
+   * @param width      Chiều rộng ảnh (pixel)
+   * @param height     Chiều cao ảnh (pixel)
+   * @param rgbaBytes  Dữ liệu pixel RGBA (width * height * 4 bytes)
+   * @param rect       [x0, y0, x1, y1] trong toạ độ PDF
+   */
+  insert_image_rgba(
+    pageIndex: number,
+    width: number,
+    height: number,
+    rgbaBytes: Uint8Array,
+    rect: [number, number, number, number]
+  ): void;
+
+  /**
+   * Tối ưu hoá / nén ảnh trong toàn bộ tài liệu.
+   * @param maxDpi      DPI tối đa muốn giữ lại (mặc định: 144)
+   * @param jpegQuality Chất lượng JPEG 1–100 (mặc định: 80)
+   */
+  optimize(maxDpi?: number, jpegQuality?: number): void;
+
+  /** Đóng và giải phóng bộ nhớ WASM. */
+  close(): void;
+  [Symbol.dispose](): void;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // 4. Top-level helper functions & Namespace
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export declare function load_winnerz_module(wasmPath?: string): Promise<WinnerzModule>;
 export declare function open(pdfData: Uint8Array | ArrayBuffer, wasmPath?: string): Promise<Document>;
+export declare function open_editor(pdfData: Uint8Array | ArrayBuffer, wasmPath?: string): Promise<PdfiumEditorDoc>;
+export declare function measure_text_width(
+  text: string,
+  fontPath: string,
+  fontSize: number,
+  isBold?: boolean,
+  isItalic?: boolean,
+  wasmPath?: string
+): Promise<number>;
 export declare function extract_page(
   pdfData: Uint8Array | ArrayBuffer,
   pageIndex?: number,
@@ -237,6 +318,16 @@ export declare function extract_page(
 export interface WinnerzNamespace {
   open(pdfData: Uint8Array | ArrayBuffer, wasmPath?: string): Promise<Document>;
   Document(pdfData: Uint8Array | ArrayBuffer, wasmPath?: string): Promise<Document>;
+  open_editor(pdfData: Uint8Array | ArrayBuffer, wasmPath?: string): Promise<PdfiumEditorDoc>;
+  PdfiumEditorDoc: typeof PdfiumEditorDoc;
+  measure_text_width(
+    text: string,
+    fontPath: string,
+    fontSize: number,
+    isBold?: boolean,
+    isItalic?: boolean,
+    wasmPath?: string
+  ): Promise<number>;
   extract_page(
     pdfData: Uint8Array | ArrayBuffer,
     pageIndex?: number,

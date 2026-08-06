@@ -17,7 +17,6 @@
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 #include "nlohmann/json.hpp"
-
 #include "extract_text/extractor_logic.hpp"
 #include "extract_text/pdf_engine.hpp"
 #include "redactor/redactor.hpp"
@@ -32,6 +31,9 @@
 #include "fpdf_edit.h"
 #include "fpdf_save.h"
 #include "fpdf_ppo.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb/stb_image_write.h"
+#include "stb/base64.hpp"
 #endif
 
 using json = nlohmann::json;
@@ -288,7 +290,10 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
 
                 span_dict["font"] = span.font_name; span_dict["size"] = span.font_size;
                 span_dict["ascender"] = span.ascender; span_dict["descender"] = span.descender;
-                span_dict["color"] = span.color; span_dict["flags"] = SpanFlags(span);
+                char color_buf[16];
+                std::snprintf(color_buf, sizeof(color_buf), "#%06X", span.color & 0xFFFFFF);
+                span_dict["color"] = std::string(color_buf);
+                span_dict["flags"] = SpanFlags(span);
 
                 if (include_chars) {
                     json chars_list = json::array();
@@ -383,16 +388,100 @@ public:
         return ExtractTextPlain(doc_, i, sort);
     }
 
+    void appendImagesToDict(int page_index, json& out) const {
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+        static bool pdfium_initialized = false;
+        if (!pdfium_initialized) {
+            FPDF_InitLibrary();
+            pdfium_initialized = true;
+        }
+
+        FPDF_DOCUMENT pdfdoc = FPDF_LoadMemDocument64(mem_data_.data(), mem_data_.size(), "");
+        if (pdfdoc) {
+            FPDF_PAGE page = FPDF_LoadPage(pdfdoc, page_index);
+            if (page) {
+                int num_objs = FPDFPage_CountObjects(page);
+                for (int obj_idx = 0; obj_idx < num_objs; ++obj_idx) {
+                    FPDF_PAGEOBJECT obj = FPDFPage_GetObject(page, obj_idx);
+                    if (FPDFPageObj_GetType(obj) == FPDF_PAGEOBJ_IMAGE) {
+                        float left = 0, bottom = 0, right = 0, top = 0;
+                        if (FPDFPageObj_GetBounds(obj, &left, &bottom, &right, &top)) {
+                            FPDF_BITMAP bitmap = FPDFImageObj_GetBitmap(obj);
+                            if (bitmap) {
+                                int width = FPDFBitmap_GetWidth(bitmap);
+                                int height = FPDFBitmap_GetHeight(bitmap);
+                                int stride = FPDFBitmap_GetStride(bitmap);
+                                int format = FPDFBitmap_GetFormat(bitmap);
+                                uint8_t* buffer = static_cast<uint8_t*>(FPDFBitmap_GetBuffer(bitmap));
+                                
+                                if (buffer && width > 0 && height > 0) {
+                                    std::vector<uint8_t> rgba(width * height * 4);
+                                    for (int y = 0; y < height; ++y) {
+                                        for (int x = 0; x < width; ++x) {
+                                            int src_idx = y * stride + x * (format == FPDFBitmap_Gray ? 1 : (format == FPDFBitmap_BGR ? 3 : 4));
+                                            int dst_idx = (y * width + x) * 4;
+                                            if (format == FPDFBitmap_BGRA || format == FPDFBitmap_BGR || format == FPDFBitmap_BGRA_Premul) {
+                                                rgba[dst_idx] = buffer[src_idx + 2];
+                                                rgba[dst_idx + 1] = buffer[src_idx + 1];
+                                                rgba[dst_idx + 2] = buffer[src_idx];
+                                                rgba[dst_idx + 3] = (format == FPDFBitmap_BGR) ? 255 : buffer[src_idx + 3];
+                                            } else if (format == FPDFBitmap_Gray) {
+                                                rgba[dst_idx] = buffer[src_idx];
+                                                rgba[dst_idx + 1] = buffer[src_idx];
+                                                rgba[dst_idx + 2] = buffer[src_idx];
+                                                rgba[dst_idx + 3] = 255;
+                                            }
+                                        }
+                                    }
+                                    
+                                    std::vector<uint8_t> png_data;
+                                    auto write_func = [](void *context, void *data, int size) {
+                                        auto* vec = static_cast<std::vector<uint8_t>*>(context);
+                                        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+                                        vec->insert(vec->end(), bytes, bytes + size);
+                                    };
+                                    stbi_write_png_to_func(write_func, &png_data, width, height, 4, rgba.data(), width * 4);
+                                    
+                                    if (!png_data.empty()) {
+                                        std::string base64_img = Winnerz::base64_encode(png_data.data(), png_data.size());
+                                        json img_dict;
+                                        img_dict["type"] = 1;
+                                        fz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
+                                        auto mapped_bbox = fz_transform_rect({left, bottom, right, top}, ctm);
+                                        img_dict["bbox"] = {mapped_bbox[0], mapped_bbox[1], mapped_bbox[2], mapped_bbox[3]};
+                                        img_dict["width"] = width;
+                                        img_dict["height"] = height;
+                                        img_dict["ext"] = "png";
+                                        img_dict["image"] = base64_img;
+                                        out["blocks"].push_back(img_dict);
+                                    }
+                                }
+                                FPDFBitmap_Destroy(bitmap);
+                            }
+                        }
+                    }
+                }
+                FPDF_ClosePage(page);
+            }
+            FPDF_CloseDocument(pdfdoc);
+        }
+#endif
+    }
+
     std::string getDict(int i, bool sort = false) const {
         checkPage(i);
         const auto ep = ExtractTextPage(doc_, i, sort);
-        return ExtractedPageToJson(ep, i, false, sort).dump();
+        json out = ExtractedPageToJson(ep, i, false, sort);
+        appendImagesToDict(i, out);
+        return out.dump();
     }
 
     std::string getRawDict(int i, bool sort = false) const {
         checkPage(i);
         const auto ep = ExtractTextPage(doc_, i, sort);
-        return ExtractedPageToJson(ep, i, true, sort).dump();
+        json out = ExtractedPageToJson(ep, i, true, sort);
+        appendImagesToDict(i, out);
+        return out.dump();
     }
 
     std::string getBlocks(int i, bool sort = false) const {
@@ -451,7 +540,9 @@ public:
 
     std::string getJson(int i, bool include_chars = false, bool sort = false) const {
         checkPage(i);
-        return ExtractedPageToJson(ExtractTextPage(doc_, i, sort), i, include_chars, sort).dump();
+        json out = ExtractedPageToJson(ExtractTextPage(doc_, i, sort), i, include_chars, sort);
+        appendImagesToDict(i, out);
+        return out.dump();
     }
 
     // ĐƠN LUỒNG
@@ -459,7 +550,9 @@ public:
         int n = doc_->count_pages();
         std::string final_res = "[";
         for (int i = 0; i < n; ++i) {
-            final_res += ExtractedPageToJson(ExtractTextPage(doc_, i, sort), i, include_chars, sort).dump();
+            json out = ExtractedPageToJson(ExtractTextPage(doc_, i, sort), i, include_chars, sort);
+            appendImagesToDict(i, out);
+            final_res += out.dump();
             if (i < n - 1) final_res += ",";
         }
         final_res += "]";
@@ -509,6 +602,41 @@ public:
                 sc.set("alpha", d.stroke_color.alpha);
                 item.set("stroke_color", sc);
             }
+            item.set("ctm", emscripten::val::array(std::vector<float>{d.ctm.a, d.ctm.b, d.ctm.c, d.ctm.d, d.ctm.e, d.ctm.f}));
+            
+            emscripten::val path_list = emscripten::val::array();
+            size_t path_idx = 0;
+            for (const auto& el : d.path.elements) {
+                emscripten::val path_el = emscripten::val::object();
+                path_el.set("cmd", (int)el.cmd);
+                
+                int num_pts = 0;
+                if (el.cmd == Winnerz::WzPathCmd::MoveTo || el.cmd == Winnerz::WzPathCmd::LineTo) num_pts = 1;
+                else if (el.cmd == Winnerz::WzPathCmd::QuadTo) num_pts = 2;
+                else if (el.cmd == Winnerz::WzPathCmd::CurveTo) num_pts = 3;
+                
+                emscripten::val pts = emscripten::val::array();
+                for (int k = 0; k < num_pts; ++k) {
+                    pts.set(k, emscripten::val::array(std::vector<float>{el.pts[k].x, el.pts[k].y}));
+                }
+                path_el.set("pts", pts);
+                path_list.set(path_idx++, path_el);
+            }
+            item.set("path", path_list);
+
+            if (d.type == "stroke") {
+                emscripten::val stroke_dict = emscripten::val::object();
+                stroke_dict.set("line_width", d.stroke.line_width);
+                stroke_dict.set("start_cap", (int)d.stroke.start_cap);
+                stroke_dict.set("dash_cap", (int)d.stroke.dash_cap);
+                stroke_dict.set("end_cap", (int)d.stroke.end_cap);
+                stroke_dict.set("line_join", (int)d.stroke.line_join);
+                stroke_dict.set("miter_limit", d.stroke.miter_limit);
+                stroke_dict.set("dash_phase", d.stroke.dash_phase);
+                stroke_dict.set("dashes", emscripten::val::array(d.stroke.dashes));
+                item.set("stroke", stroke_dict);
+            }
+            
             out.set(idx++, item);
         }
         FPDF_ClosePage(page);
@@ -520,7 +648,7 @@ public:
 #endif
     }
 
-    emscripten::val renderPage(int page_index, float scale, emscripten::val clip_val) {
+    emscripten::val renderPage(int page_index, float scale, emscripten::val clip_val, emscripten::val opts = emscripten::val::undefined()) {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
         if (scale <= 0.0f) throw std::runtime_error("scale must be > 0");
         std::array<float, 4> clip = {0, 0, 0, 0};
@@ -530,9 +658,18 @@ public:
             if(vec.size() >= 4) { clip = {vec[0], vec[1], vec[2], vec[3]}; clip_ptr = &clip; }
         }
 
+        bool hide_text = false;
+        if (!opts.isUndefined() && !opts.isNull()) {
+            if (opts.typeOf().as<std::string>() == "boolean") {
+                hide_text = opts.as<bool>();
+            } else if (opts.typeOf().as<std::string>() == "object" && opts.hasOwnProperty("hide_text")) {
+                hide_text = opts["hide_text"].as<bool>();
+            }
+        }
+
         winnerz::PreviewImage preview;
         std::string error_message;
-        if (!winnerz::RenderPdfPagePreview(path_, mem_data_, page_index, scale, clip_ptr, preview, &error_message)) {
+        if (!winnerz::RenderPdfPagePreview(path_, mem_data_, page_index, scale, clip_ptr, preview, &error_message, hide_text)) {
             throw std::runtime_error("renderPage failed: " + error_message);
         }
         
@@ -544,7 +681,7 @@ public:
         out.set("samples", VecToVal(preview.rgba));
         return out;
 #else
-        (void)page_index; (void)scale; (void)clip_val;
+        (void)page_index; (void)scale; (void)clip_val; (void)opts;
         throw std::runtime_error("renderPage requires PDFium");
 #endif
     }
@@ -608,9 +745,12 @@ public:
 
     emscripten::val insertTextToPagesJson(const std::string& json_str, const std::string& fonts_dir) const {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+        printf("Debug step: Entering insertTextToPagesJson\n");
         std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
         try {
+            printf("Debug step: Parsing JSON\n");
             json j = json::parse(json_str);
+            printf("Debug step: JSON parsed successfully\n");
             for (auto& item : j.items()) {
                 int page_index = std::stoi(item.key());
                 std::vector<Winnerz::WinInsertTextTask> tasks;
@@ -633,7 +773,9 @@ public:
             }
         } catch (const std::exception& e) { throw std::runtime_error(std::string("JSON parse error: ") + e.what()); }
 
+        printf("Debug step: Calling InsertTextToMultiplePages\n");
         std::vector<uint8_t> merged_bytes = Winnerz::InsertTextToMultiplePages(doc_.get(), pages_tasks, fonts_dir, nullptr, 0);
+        printf("Debug step: Returning result from InsertTextToMultiplePages\n");
         if (merged_bytes.empty()) return VecToVal(mem_data_); // Fallback to original
         return VecToVal(merged_bytes);
 #else
@@ -644,10 +786,13 @@ public:
 
     emscripten::val insertTextToPagesFitSpacingJson(const std::string& json_str, const std::string& fonts_dir) const {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+        printf("Debug step: Entering insertTextToPagesFitSpacingJson\n");
         // Same logic as above, just calling InsertTextToMultiplePagesFitSpacing
         std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
         try {
+            printf("Debug step: Parsing JSON\n");
             json j = json::parse(json_str);
+            printf("Debug step: JSON parsed successfully\n");
             for (auto& item : j.items()) {
                 int page_index = std::stoi(item.key());
                 std::vector<Winnerz::WinInsertTextTask> tasks;
@@ -670,7 +815,9 @@ public:
             }
         } catch (const std::exception& e) { throw std::runtime_error(std::string("JSON parse error: ") + e.what()); }
 
+        printf("Debug step: Calling InsertTextToMultiplePagesFitSpacing\n");
         std::vector<uint8_t> merged_bytes = Winnerz::InsertTextToMultiplePagesFitSpacing(doc_.get(), pages_tasks, fonts_dir, nullptr, 0);
+        printf("Debug step: Returning result from InsertTextToMultiplePagesFitSpacing\n");
         if (merged_bytes.empty()) return VecToVal(mem_data_);
         return VecToVal(merged_bytes);
 #else
@@ -678,6 +825,7 @@ public:
         throw std::runtime_error("insertTextToPagesFitSpacingJson requires PDFium");
 #endif
     }
+
 
     emscripten::val insertRectsToPagesJson(const std::string& json_str) const {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
@@ -722,8 +870,177 @@ float MeasureTextWidthWasm(const std::string& text, const std::string& font_path
 
 } // namespace
 
+
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+class WasmPdfiumEditorDoc {
+public:
+    FPDF_DOCUMENT doc = nullptr;
+    std::string mem_data_str;
+    std::vector<uint8_t> mem_data;
+
+    static void InitPdfium() {
+        static std::once_flag pdfium_init_once;
+        std::call_once(pdfium_init_once, []() {
+            FPDF_InitLibrary();
+        });
+    }
+
+    WasmPdfiumEditorDoc(const emscripten::val& b) {
+        InitPdfium();
+        mem_data = ValToVec(b);
+        mem_data_str = std::string(mem_data.begin(), mem_data.end());
+        doc = FPDF_LoadMemDocument64(mem_data_str.data(), mem_data_str.size(), "");
+        if (!doc) {
+            throw std::runtime_error("FPDF_LoadMemDocument64 failed");
+        }
+    }
+
+    ~WasmPdfiumEditorDoc() {
+        close();
+    }
+
+    void close() {
+        if (doc) {
+            FPDF_CloseDocument(doc);
+            doc = nullptr;
+        }
+        mem_data_str.clear();
+        mem_data.clear();
+    }
+
+    void import_pages(WasmPdfiumEditorDoc& src, const std::string& page_range) {
+        if (!doc || !src.doc) throw std::runtime_error("Invalid document");
+        if (!FPDF_ImportPages(doc, src.doc, page_range.empty() ? nullptr : page_range.c_str(), 0)) {
+            throw std::runtime_error("FPDF_ImportPages failed");
+        }
+    }
+
+    struct BufferWriter : public FPDF_FILEWRITE {
+        std::vector<uint8_t> buffer;
+        BufferWriter() {
+            version = 1;
+            WriteBlock = [](FPDF_FILEWRITE* pThis, const void* pData, unsigned long size) -> int {
+                auto* self = static_cast<BufferWriter*>(pThis);
+                const uint8_t* ptr = static_cast<const uint8_t*>(pData);
+                self->buffer.insert(self->buffer.end(), ptr, ptr + size);
+                return 1;
+            };
+        }
+    };
+
+    emscripten::val save(bool incremental = false) {
+        try {
+            if (!doc) throw std::runtime_error("Invalid document");
+            BufferWriter bw;
+            int flags = incremental ? FPDF_INCREMENTAL : FPDF_NO_INCREMENTAL;
+            if (!FPDF_SaveAsCopy(doc, &bw, flags)) {
+                throw std::runtime_error("FPDF_SaveAsCopy failed");
+            }
+            return VecToVal(bw.buffer);
+        } catch (const std::exception& e) {
+            std::cerr << "C++ Exception in PdfiumEditorDoc::save: " << e.what() << "\n";
+            return emscripten::val::null();
+        } catch (...) {
+            std::cerr << "Unknown C++ Exception in PdfiumEditorDoc::save\n";
+            return emscripten::val::null();
+        }
+    }
+
+    void clean_contents(int page_index) {
+        if (!doc) throw std::runtime_error("Invalid document");
+        FPDF_PAGE page = FPDF_LoadPage(doc, page_index);
+        if (!page) return;
+
+        int num_objs = FPDFPage_CountObjects(page);
+        for (int i = num_objs - 1; i >= 0; --i) {
+            FPDF_PAGEOBJECT obj = FPDFPage_GetObject(page, i);
+            FPDFPage_RemoveObject(page, obj);
+            FPDFPageObj_Destroy(obj);
+        }
+        FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+    }
+
+    void insert_image_rgba(int page_index, int width, int height, const emscripten::val& rgba_val, emscripten::val rect_val) {
+        if (!doc) throw std::runtime_error("Invalid document");
+        FPDF_PAGE page = FPDF_LoadPage(doc, page_index);
+        if (!page) throw std::runtime_error("Failed to load page");
+
+        FPDF_PAGEOBJECT img_obj = FPDFPageObj_NewImageObj(doc);
+        if (!img_obj) {
+            FPDF_ClosePage(page);
+            throw std::runtime_error("Failed to create image object");
+        }
+
+        FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, nullptr, 0);
+        if (!bitmap) {
+            FPDFPageObj_Destroy(img_obj);
+            FPDF_ClosePage(page);
+            throw std::runtime_error("Failed to create bitmap");
+        }
+        
+        std::vector<uint8_t> rgba = ValToVec(rgba_val);
+        if (rgba.size() < (size_t)(width * height * 4)) {
+            FPDFBitmap_Destroy(bitmap);
+            FPDFPageObj_Destroy(img_obj);
+            FPDF_ClosePage(page);
+            throw std::runtime_error("RGBA buffer too small");
+        }
+
+        uint8_t* dest = static_cast<uint8_t*>(FPDFBitmap_GetBuffer(bitmap));
+        int stride = FPDFBitmap_GetStride(bitmap);
+        const uint8_t* src = rgba.data();
+        
+        for (int y = 0; y < height; ++y) {
+            uint8_t* dst_row = dest + y * stride;
+            const uint8_t* src_row = src + y * width * 4;
+            for (int x = 0; x < width; ++x) {
+                dst_row[x * 4 + 0] = src_row[x * 4 + 2];
+                dst_row[x * 4 + 1] = src_row[x * 4 + 1];
+                dst_row[x * 4 + 2] = src_row[x * 4 + 0];
+                dst_row[x * 4 + 3] = src_row[x * 4 + 3];
+            }
+        }
+
+        if (!FPDFImageObj_SetBitmap(&page, 1, img_obj, bitmap)) {
+            FPDFBitmap_Destroy(bitmap);
+            FPDFPageObj_Destroy(img_obj);
+            FPDF_ClosePage(page);
+            throw std::runtime_error("Failed to set bitmap");
+        }
+        FPDFBitmap_Destroy(bitmap);
+
+        float x0 = rect_val[0].as<float>();
+        float y0 = rect_val[1].as<float>();
+        float x1 = rect_val[2].as<float>();
+        float y1 = rect_val[3].as<float>();
+
+        float w = x1 - x0;
+        float h = y1 - y0;
+        
+        FPDFPageObj_Transform(img_obj, w, 0, 0, h, x0, y0);
+        FPDFPage_InsertObject(page, img_obj);
+        FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+    }
+
+};
+#endif
+
+
 EMSCRIPTEN_BINDINGS(winnerz) {
     function("measureTextWidth", &MeasureTextWidthWasm);
+
+    
+#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
+    class_<WasmPdfiumEditorDoc>("PdfiumEditorDoc")
+        .constructor<emscripten::val>()
+        .function("close", &WasmPdfiumEditorDoc::close)
+        .function("import_pages", &WasmPdfiumEditorDoc::import_pages)
+        .function("save", &WasmPdfiumEditorDoc::save)
+        .function("clean_contents", &WasmPdfiumEditorDoc::clean_contents)
+        .function("insert_image_rgba", &WasmPdfiumEditorDoc::insert_image_rgba);
+#endif
 
     class_<WasmDocument>("Document")
         .constructor<emscripten::val>()

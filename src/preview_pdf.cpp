@@ -9,6 +9,7 @@
 
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
 #include "fpdfview.h"
+#include "fpdf_edit.h"
 #endif
 
 namespace winnerz {
@@ -102,7 +103,8 @@ bool RenderPdfPagePreview(const std::string& pdf_path,
                           float scale,
                           const std::array<float, 4>* clip,
                           PreviewImage& out_image,
-                          std::string* error_message) {
+                          std::string* error_message,
+                          bool hide_text) {
 	out_image = {};
 
 #if !defined(WINNERZ_USE_PDFIUM_PREVIEW) || !WINNERZ_USE_PDFIUM_PREVIEW
@@ -144,6 +146,18 @@ bool RenderPdfPagePreview(const std::string& pdf_path,
 		std::ostringstream oss;
 		oss << "FPDF_LoadPage failed, error=" << code;
 		return SetError(error_message, oss.str());
+	}
+	
+	if (hide_text) {
+		const int num_objects = FPDFPage_CountObjects(page);
+		for (int i = num_objects - 1; i >= 0; --i) {
+			FPDF_PAGEOBJECT obj = FPDFPage_GetObject(page, i);
+			if (FPDFPageObj_GetType(obj) == FPDF_PAGEOBJ_TEXT) {
+				FPDFPage_RemoveObject(page, obj);
+				FPDFPageObj_Destroy(obj);
+			}
+		}
+		FPDFPage_GenerateContent(page);
 	}
 
 	const float page_w = FPDF_GetPageWidthF(page);

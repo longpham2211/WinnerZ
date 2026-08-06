@@ -45,6 +45,7 @@ using json = nlohmann::json;
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
 #include "drawing.hpp"
 #include "fpdfview.h"
+
 #endif
 
 namespace py = pybind11;
@@ -1235,19 +1236,21 @@ public:
         }
     };
 
-    py::bytes save() {
+    py::bytes save(bool incremental = false) {
         if (!doc) throw std::runtime_error("Invalid document");
         BufferWriter bw;
-        if (!FPDF_SaveAsCopy(doc, &bw, 0)) {
+        int flags = incremental ? FPDF_INCREMENTAL : FPDF_NO_INCREMENTAL;
+        if (!FPDF_SaveAsCopy(doc, &bw, flags)) {
             throw std::runtime_error("FPDF_SaveAsCopy failed");
         }
         return py::bytes(reinterpret_cast<const char*>(bw.buffer.data()), bw.buffer.size());
     }
 
-    void save_to_file(const std::string& path) {
+    void save_to_file(const std::string& path, bool incremental = false) {
         if (!doc) throw std::runtime_error("Invalid document");
         BufferWriter bw;
-        if (!FPDF_SaveAsCopy(doc, &bw, 0)) {
+        int flags = incremental ? FPDF_INCREMENTAL : FPDF_NO_INCREMENTAL;
+        if (!FPDF_SaveAsCopy(doc, &bw, flags)) {
             throw std::runtime_error("FPDF_SaveAsCopy failed");
         }
         std::ofstream f(path, std::ios::binary);
@@ -1851,8 +1854,8 @@ PYBIND11_MODULE(winnerz_core, m) {
         .def(py::init<const std::string&>())
         .def("close", &PyPdfiumEditorDoc::close)
         .def("import_pages", &PyPdfiumEditorDoc::import_pages)
-        .def("save", &PyPdfiumEditorDoc::save)
-        .def("save_to_file", &PyPdfiumEditorDoc::save_to_file)
+        .def("save", &PyPdfiumEditorDoc::save, py::arg("incremental") = false)
+        .def("save_to_file", &PyPdfiumEditorDoc::save_to_file, py::arg("path"), py::arg("incremental") = false)
         .def("clean_contents", &PyPdfiumEditorDoc::clean_contents)
         .def("insert_image_rgba", &PyPdfiumEditorDoc::insert_image_rgba)
         .def("show_pdf_page", &PyPdfiumEditorDoc::show_pdf_page);

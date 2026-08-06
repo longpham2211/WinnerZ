@@ -22,7 +22,8 @@ bool RenderPdfPagePreview(const std::string& pdf_path,
                           float scale,
                           const std::array<float, 4>* clip,
                           PreviewImage& out_image,
-                          std::string* error_message = nullptr);
+                          std::string* error_message = nullptr,
+                          bool hide_text = false);
 
 bool IsPdfiumPreviewEnabled();
 

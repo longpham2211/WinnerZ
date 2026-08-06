@@ -25,24 +25,21 @@ struct WinChar {
     float ascender = 0.8f;
     float descender = -0.2f;
     
-    // Thêm cờ gạch chân/gạch ngang nếu cần thiết sau này
     bool is_underlined = false;
     bool is_strikeout = false;
     bool is_synthetic = false;
 };
 
-// Cấu trúc Line chuẩn
 struct WinLine {
     Rect bbox;
     Vec2 dir;
     int wmode;
-    bool joined; // Cờ nối dòng do Hyphen (gạch nối từ)
+    bool joined; 
     std::vector<WinChar> chars;
 };
 
 enum class BlockType { TEXT, IMAGE, VECTOR };
 
-// Cấu trúc Block chuẩn
 struct WinBlock {
     BlockType type;
     Rect bbox;
@@ -59,9 +56,8 @@ public:
     WinTextExtractor();
 
     void begin_page(float width, float height);
-    void hint_new_text_obj(); // Báo hiệu PDF vừa gọi lệnh BT (Begin Text)
+    void hint_new_text_obj(); 
     
-    // Hàm đẩy từng char từ PDF Interpreter vào
     void add_char(int unicode, float x, float y, float adv, float matrix[6], 
                   const std::string& font_name, float size, uint32_t color, 
                   bool bold, bool italic, bool serif, bool mono, int wmode, float ascender, float descender, 
@@ -71,7 +67,6 @@ public:
     std::string get_text(const WinPage& page);
 
 private:
-    // Đã thêm int glyph vào tham số
     void add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name, 
                       float size, uint32_t color, bool bold, bool italic, bool serif, bool mono,
                       int wmode, int bidi, bool force_new_line, float ascender, float descender, bool is_synthetic_space);

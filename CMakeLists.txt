@@ -223,6 +223,8 @@ if(WINNERZ_BUILD_PYTHON_WRAPPER)
     
     if(UNIX AND NOT APPLE)
         target_link_options(winnerz_core PRIVATE "-Wl,--allow-multiple-definition")
+    elseif(MSVC)
+        target_link_options(winnerz_core PRIVATE "/FORCE:MULTIPLE")
     endif()
     
     if(APPLE)

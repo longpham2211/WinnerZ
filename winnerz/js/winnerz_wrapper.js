@@ -137,12 +137,23 @@ export class Page {
   /**
    * Render page to image/pixmap. Python: page.get_pixmap()
    * Requires PDFium enabled in WASM build.
-   * @param {number} scale Zoom level (default: 1.0)
+   * @param {number|Object} options Zoom level or options object {scale, clip, hide_text}
    * @param {Array<number>|null} clip [x0, y0, x1, y1] crop box
    * @returns {{width: number, height: number, channels: number, stride: number, samples: Uint8Array}}
    */
-  get_pixmap(scale = 1.0, clip = null) {
-    return this._doc._raw.renderPage(this.index, scale, clip);
+  get_pixmap(options = 1.0, clip = null) {
+    let scale = 1.0;
+    let hide_text = false;
+    
+    if (typeof options === 'number') {
+      scale = options;
+    } else if (options && typeof options === 'object') {
+      scale = options.scale ?? 1.0;
+      clip = options.clip ?? clip;
+      hide_text = options.hide_text ?? false;
+    }
+    
+    return this._doc._raw.renderPage(this.index, scale, clip, { hide_text });
   }
 }
 
@@ -397,12 +408,227 @@ export async function extract_page(pdfData, pageIndex = 0, mode = 'text', sort =
   }
 }
 
+// ─── measureTextWidth — đo chiều rộng chữ ────────────────────────────────────
+
+/**
+ * Đo chiều rộng của một đoạn text dùng HarfBuzz + FreeType.
+ * @param {string} text
+ * @param {string} fontPath  Đường dẫn file font (ví dụ: '/fonts/Roboto.ttf')
+ * @param {number} fontSize  Kích thước cỡ chữ (pt)
+ * @param {boolean} [isBold=false]
+ * @param {boolean} [isItalic=false]
+ * @param {string} [wasmPath='']
+ * @returns {Promise<number>}
+ */
+export async function measure_text_width(text, fontPath, fontSize, isBold = false, isItalic = false, wasmPath = '') {
+  const W = await load_winnerz_module(wasmPath);
+  return W.measureTextWidth(text, fontPath, fontSize, isBold, isItalic);
+}
+
+// ─── class PdfiumEditorDoc ────────────────────────────────────────────────────
+
+/**
+ * Gọi hàm optimize PDF độc lập (không cần PdfiumEditorDoc).
+ * Nén PDF bằng cách sử dụng WinExtract parser.
+ * @param {Uint8Array|ArrayBuffer} pdfData
+ * @param {number} max_dpi
+ * @param {number} jpeg_quality
+ * @param {string} [wasmPath='']
+ * @returns {Promise<Uint8Array>} mảng byte của PDF đã nén
+ */
+export async function optimize_pdf(pdfData, max_dpi = 150, jpeg_quality = 75, wasmPath = '') {
+  const W = await load_winnerz_module(wasmPath);
+  if (!W.optimizePdf) {
+    throw new Error('Hàm optimizePdf không khả dụng trong bản WASM này.');
+  }
+  const bytes = pdfData instanceof Uint8Array ? pdfData : new Uint8Array(pdfData);
+  return W.optimizePdf(bytes, max_dpi, jpeg_quality);
+}
+
+/**
+ * Lớp chỉnh sửa PDF dùng PDFium. Hỗ trợ ghép trang, thêm ảnh, nén ảnh.
+ * Yêu cầu build WASM với flag WINNERZ_USE_PDFIUM_PREVIEW=1.
+ *
+ * Usage:
+ *   const editor = await PdfiumEditorDoc.create(pdfBytes);
+ *   editor.clean_contents(0);
+ *   editor.insert_image_rgba(0, w, h, rgbaBytes, [x0, y0, x1, y1]);
+ *   editor.optimize(144, 80);
+ *   const newPdf = editor.save();
+ *   editor.close();
+ */
+export class PdfiumEditorDoc {
+  /** @type {any} Raw WASM PdfiumEditorDoc Embind object */
+  _raw = null;
+  _closed = false;
+
+  /**
+   * Async factory — load PDF từ bytes.
+   * @param {Uint8Array|ArrayBuffer} pdfData
+   * @param {string} [wasmPath='']
+   * @returns {Promise<PdfiumEditorDoc>}
+   */
+  static async create(pdfData, wasmPath = '') {
+    const W = await load_winnerz_module(wasmPath);
+    const bytes = pdfData instanceof Uint8Array ? pdfData : new Uint8Array(pdfData);
+    const editor = new PdfiumEditorDoc();
+    
+    editor._W = W;
+    if (!W.PdfiumEditorDoc) {
+      // Tương thích ngược: Fallback sang dùng optimizePdf mới nếu không có PDFium
+      editor._is_fallback = true;
+      editor._pdfData = bytes;
+    } else {
+      editor._is_fallback = false;
+      editor._raw = new W.PdfiumEditorDoc(bytes);
+    }
+    return editor;
+  }
+
+  /**
+   * Async factory — tạo tài liệu PDF rỗng.
+   * @param {string} [wasmPath='']
+   * @returns {Promise<PdfiumEditorDoc>}
+   */
+  static async create_empty(wasmPath = '') {
+    const W = await load_winnerz_module(wasmPath);
+    if (!W.PdfiumEditorDoc) {
+      throw new Error('PdfiumEditorDoc không khả dụng trong bản WASM này.');
+    }
+    const editor = new PdfiumEditorDoc();
+    editor._raw = new W.PdfiumEditorDoc();
+    return editor;
+  }
+
+  _assert_open() {
+    if (this._closed) throw new Error('PdfiumEditorDoc đã đóng.');
+  }
+
+  /**
+   * Ghép trang từ tài liệu nguồn vào tài liệu hiện tại.
+   * @param {PdfiumEditorDoc} srcEditor Tài liệu nguồn
+   * @param {string} [pageRange=''] Chuỗi range trang (VD: "1,3,5-7"). Rỗng = toàn bộ.
+   */
+  import_pages(srcEditor, pageRange = '') {
+    this._assert_open();
+    if (!(srcEditor instanceof PdfiumEditorDoc) || srcEditor._closed) {
+      throw new Error('srcEditor phải là một PdfiumEditorDoc đang mở.');
+    }
+    this._raw.import_pages(srcEditor._raw, pageRange);
+  }
+
+  /**
+   * Xuất tài liệu ra Uint8Array (bytes PDF).
+   * @param {boolean} [incremental=false] Lưu theo kiểu incremental (nhanh hơn nhưng file to hơn)
+   * @returns {Uint8Array}
+   */
+  save(incremental = false) {
+    this._assert_open();
+    if (this._is_fallback) {
+      return this._pdfData; // Trả về mảng byte đã nén
+    }
+    return this._raw.save(incremental);
+  }
+
+  /**
+   * Xoá toàn bộ nội dung (objects) trong một trang.
+   * @param {number} pageIndex
+   */
+  clean_contents(pageIndex) {
+    this._assert_open();
+    this._raw.clean_contents(pageIndex);
+  }
+
+  /**
+   * Chèn ảnh RGBA vào một vị trí trên trang.
+   * @param {number} pageIndex
+   * @param {number} width   Chiều rộng ảnh (pixel)
+   * @param {number} height  Chiều cao ảnh (pixel)
+   * @param {Uint8Array} rgbaBytes  Dữ liệu pixel RGBA (width * height * 4 bytes)
+   * @param {[number,number,number,number]} rect [x0, y0, x1, y1] trong toạ độ PDF
+   */
+  insert_image_rgba(pageIndex, width, height, rgbaBytes, rect) {
+    this._assert_open();
+    const bytes = rgbaBytes instanceof Uint8Array ? rgbaBytes : new Uint8Array(rgbaBytes);
+    this._raw.insert_image_rgba(pageIndex, width, height, bytes, rect);
+  }
+
+  /**
+   * Tối ưu hoá / nén ảnh trong toàn bộ tài liệu.
+   * Ảnh có DPI vượt quá max_dpi sẽ được downscale và nén lại bằng JPEG.
+   * @param {number} [maxDpi=144]      DPI tối đa muốn giữ lại
+   * @param {number} [jpegQuality=80] Chất lượng JPEG (1–100)
+   */
+  optimize(maxDpi = 144, jpegQuality = 80) {
+    this._assert_open();
+    if (this._is_fallback) {
+      if (!this._W.optimizePdf) throw new Error('Hàm optimizePdf không khả dụng.');
+      this._pdfData = this._W.optimizePdf(this._pdfData, maxDpi, jpegQuality);
+    } else {
+      if (this._W.optimizePdf) {
+        // TRIPLE PASS ARCHITECTURE
+        // Pass 1: PDFium save(false) - Dọn rác cấu trúc
+        const cleanBytes = this.save(false);
+        
+        // Pass 2: WinExtract optimizePdf - Cắt Font & Nén ảnh (Ghi nối Incremental)
+        const incBytes = this._W.optimizePdf(cleanBytes, maxDpi, jpegQuality);
+        
+        // Nạp lại vào PDFium
+        this._raw.close();
+        this._raw.delete();
+        this._raw = new this._W.PdfiumEditorDoc(incBytes);
+        
+        // Pass 3: PDFium save(false) - Ép phẳng file (Flatten XRef)
+        const finalBytes = this.save(false);
+        
+        // Nạp lại bản chính thức siêu nhẹ
+        this._raw.close();
+        this._raw.delete();
+        this._raw = new this._W.PdfiumEditorDoc(finalBytes);
+        this._pdfData = finalBytes;
+      } else {
+        this._raw.optimize(maxDpi, jpegQuality);
+      }
+    }
+  }
+
+  /** Đóng và giải phóng bộ nhớ WASM. */
+  close() {
+    if (!this._closed) {
+      if (this._is_fallback) {
+        this._pdfData = null;
+        this._W = null;
+      } else if (this._raw) {
+        this._raw.close();
+        this._raw.delete();
+        this._raw = null;
+      }
+      this._closed = true;
+    }
+  }
+
+  [Symbol.dispose]() { this.close(); }
+}
+
+/**
+ * Shortcut để mở một tài liệu PDF trong editor.
+ * @param {Uint8Array|ArrayBuffer} pdfData
+ * @param {string} [wasmPath='']
+ * @returns {Promise<PdfiumEditorDoc>}
+ */
+export async function open_editor(pdfData, wasmPath = '') {
+  return PdfiumEditorDoc.create(pdfData, wasmPath);
+}
+
 // ─── winnerz namespace — default export ────────────────────────────────────────
 
 const winnerz = {
   open,
   Document: (pdfData, wasmPath = '') => Document.create(pdfData, wasmPath),
   extract_page,
+  open_editor,
+  PdfiumEditorDoc,
+  measure_text_width,
   load_module: load_winnerz_module,
   Page,
 };

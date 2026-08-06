@@ -34,13 +34,36 @@ static std::mutex global_shaping_mutex;
 
 namespace Winnerz {
 
+static std::vector<uint32_t> Utf8ToUtf32(const std::string& utf8);
+static std::string Utf32ToUtf8(const std::vector<uint32_t>& utf32) {
+    std::string utf8;
+    for (uint32_t cp : utf32) {
+        if (cp <= 0x7F) {
+            utf8.push_back((char)cp);
+        } else if (cp <= 0x7FF) {
+            utf8.push_back((char)(0xC0 | (cp >> 6)));
+            utf8.push_back((char)(0x80 | (cp & 0x3F)));
+        } else if (cp <= 0xFFFF) {
+            utf8.push_back((char)(0xE0 | (cp >> 12)));
+            utf8.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            utf8.push_back((char)(0x80 | (cp & 0x3F)));
+        } else if (cp <= 0x10FFFF) {
+            utf8.push_back((char)(0xF0 | (cp >> 18)));
+            utf8.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
+            utf8.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            utf8.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+    return utf8;
+}
+
 static std::vector<uint32_t> Utf8ToUtf32(const std::string& utf8) {
     std::vector<uint32_t> utf32;
     size_t i = 0;
     while (i < utf8.length()) {
-        uint32_t cp = 0;
         unsigned char c = utf8[i];
-        if (c < 0x80) {
+        uint32_t cp = 0;
+        if (c <= 0x7F) {
             cp = c;
             i += 1;
         } else if ((c & 0xE0) == 0xC0) {
@@ -56,19 +79,52 @@ static std::vector<uint32_t> Utf8ToUtf32(const std::string& utf8) {
             cp = ((c & 0x07) << 18) | ((utf8[i+1] & 0x3F) << 12) | ((utf8[i+2] & 0x3F) << 6) | (utf8[i+3] & 0x3F);
             i += 4;
         } else {
-            i += 1;
+            i += 1; // invalid
+            continue;
         }
         utf32.push_back(cp);
     }
     return utf32;
 }
 
+static void NormalizeText(std::vector<uint32_t>& utf32) {
+    std::vector<uint32_t> normalized;
+    for (auto cp : utf32) {
+        if (cp >= 0xFF10 && cp <= 0xFF19) { // Fullwidth digits
+            normalized.push_back(cp - 0xFF10 + 0x0030);
+        } else if (cp == 0x201C || cp == 0x201D) { // Smart quotes
+            normalized.push_back(0x0022); // "
+        } else if (cp == 0x2018 || cp == 0x2019) { // Single smart quotes
+            normalized.push_back(0x0027); // '
+        } else if (cp == 0x2013 || cp == 0x2014) { // En/Em dash
+            normalized.push_back(0x002D); // -
+        } else if (cp == 0xFF1A) { // Fullwidth colon
+            normalized.push_back(0x003A); // :
+        } else if (cp == 0xFF08) { // Fullwidth (
+            normalized.push_back(0x0028);
+        } else if (cp == 0xFF09) { // Fullwidth )
+            normalized.push_back(0x0029);
+        } else if (cp == 0x2026) { // Ellipsis
+            normalized.push_back(0x002E); // .
+            normalized.push_back(0x002E); // .
+            normalized.push_back(0x002E); // .
+        } else {
+            normalized.push_back(cp);
+        }
+    }
+    utf32 = std::move(normalized);
+}
+
+
+
+
+struct FontSlot;
+
 struct ShapedGlyph {
     uint32_t id;
-    float x_advance;
-    float y_advance;
-    float x_offset;
-    float y_offset;
+    float x_advance, y_advance, x_offset, y_offset;
+    const std::string* font_pdf_name;
+    FontSlot* slot = nullptr;
 };
 
 struct ShapedLine {
@@ -85,105 +141,251 @@ struct LogicalGlyph {
     float y_offset;
     int bidi_level;
     uint32_t cluster;
+    const std::string* font_pdf_name;
+    FontSlot* slot = nullptr;
 };
+
+struct FontSlot {
+    std::vector<uint8_t> data;
+    FT_Face face = nullptr;
+    hb_font_t* hb_font = nullptr;
+    std::string pdf_name;   // e.g. "/F_WNZRN_0"
+    int type0_obj_id = -1;
+    bool used = false;
+    std::string family_name;
+    std::string family_name_norm;
+    bool has_black = false;
+    bool has_heavy = false;
+    bool has_light = false;
+    bool has_thin = false;
+    bool is_safe_fallback = false;
+    bool is_bold = false;
+    bool is_italic = false;
+    std::unordered_set<uint32_t> used_codepoints;
+    std::unordered_set<uint32_t> used_gids;
+    std::map<uint32_t, std::vector<uint32_t>> gid_to_unicode;
+    std::vector<uint8_t> used_bitmap;
+
+    std::vector<uint8_t> subset_data;
+    FT_Face subset_face = nullptr;
+    hb_font_t* subset_hb_font = nullptr;
+
+    ~FontSlot() {
+        if (subset_hb_font) hb_font_destroy(subset_hb_font);
+        if (subset_face) FT_Done_Face(subset_face);
+        if (hb_font) hb_font_destroy(hb_font);
+        if (face) FT_Done_Face(face);
+    }
+
+    FontSlot() = default;
+    FontSlot(const FontSlot&) = delete;
+    FontSlot& operator=(const FontSlot&) = delete;
+
+    FontSlot(FontSlot&& other) noexcept {
+        data = std::move(other.data);
+        face = other.face; other.face = nullptr;
+        hb_font = other.hb_font; other.hb_font = nullptr;
+        pdf_name = std::move(other.pdf_name);
+        type0_obj_id = other.type0_obj_id;
+        used = other.used;
+        family_name = std::move(other.family_name);
+        family_name_norm = std::move(other.family_name_norm);
+        has_black = other.has_black;
+        has_heavy = other.has_heavy;
+        has_light = other.has_light;
+        has_thin = other.has_thin;
+        is_safe_fallback = other.is_safe_fallback;
+        is_bold = other.is_bold;
+        is_italic = other.is_italic;
+        used_codepoints = std::move(other.used_codepoints);
+        used_gids = std::move(other.used_gids);
+        gid_to_unicode = std::move(other.gid_to_unicode);
+        used_bitmap = std::move(other.used_bitmap);
+        subset_data = std::move(other.subset_data);
+        subset_face = other.subset_face; other.subset_face = nullptr;
+        subset_hb_font = other.subset_hb_font; other.subset_hb_font = nullptr;
+    }
+    FontSlot& operator=(FontSlot&& other) noexcept {
+        if (this != &other) {
+            if (subset_hb_font) hb_font_destroy(subset_hb_font);
+            if (subset_face) FT_Done_Face(subset_face);
+            if (hb_font) hb_font_destroy(hb_font);
+            if (face) FT_Done_Face(face);
+            
+            data = std::move(other.data);
+            face = other.face; other.face = nullptr;
+            hb_font = other.hb_font; other.hb_font = nullptr;
+            pdf_name = std::move(other.pdf_name);
+            type0_obj_id = other.type0_obj_id;
+            used = other.used;
+            family_name = std::move(other.family_name);
+            family_name_norm = std::move(other.family_name_norm);
+            has_black = other.has_black;
+            has_heavy = other.has_heavy;
+            has_light = other.has_light;
+            has_thin = other.has_thin;
+            is_safe_fallback = other.is_safe_fallback;
+            is_bold = other.is_bold;
+            is_italic = other.is_italic;
+            used_codepoints = std::move(other.used_codepoints);
+            used_gids = std::move(other.used_gids);
+        gid_to_unicode = std::move(other.gid_to_unicode);
+            used_bitmap = std::move(other.used_bitmap);
+            subset_data = std::move(other.subset_data);
+            subset_face = other.subset_face; other.subset_face = nullptr;
+            subset_hb_font = other.subset_hb_font; other.subset_hb_font = nullptr;
+        }
+        return *this;
+    }
+};
+
+using FontSelectorFn = std::function<FontSlot*(const std::vector<uint32_t>&)>;
 
 struct BidiStateInsert {
     std::vector<uint32_t>* utf32;
     std::vector<LogicalGlyph>* logical_glyphs;
-    hb_font_t* hb_font;
-    float scale;
+    FontSelectorFn font_selector;
+    float font_size;
 };
 
 static void fz_bidi_insert_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
     BidiStateInsert* state = static_cast<BidiStateInsert*>(arg);
-    size_t start = fragment - state->utf32->data();
+    size_t start_idx = fragment - state->utf32->data();
     
-    hb_buffer_t* hb_buffer = hb_buffer_create();
-    hb_buffer_add_utf32(hb_buffer, state->utf32->data(), state->utf32->size(), start, fragmentLen);
-    hb_buffer_guess_segment_properties(hb_buffer);
-    hb_buffer_set_direction(hb_buffer, (bidiLevel & 1) ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
-    
-    hb_shape(state->hb_font, hb_buffer, NULL, 0);
-    
-    unsigned int glyph_count;
-    hb_glyph_info_t* glyph_info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
-    hb_glyph_position_t* glyph_pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
-    
-    std::vector<LogicalGlyph> fragment_glyphs;
-    for (unsigned int i = 0; i < glyph_count; ++i) {
-        LogicalGlyph g;
-        g.glyphid = glyph_info[i].codepoint;
-        g.x_advance = glyph_pos[i].x_advance * state->scale;
-        g.y_advance = glyph_pos[i].y_advance * state->scale;
-        g.x_offset = glyph_pos[i].x_offset * state->scale;
-        g.y_offset = glyph_pos[i].y_offset * state->scale;
-        g.bidi_level = bidiLevel;
-        g.cluster = glyph_info[i].cluster;
-        fragment_glyphs.push_back(g);
+    size_t i = 0;
+    while (i < fragmentLen) {
+        int current_script = ucdn_get_script(fragment[i]);
+        size_t j = i + 1;
+        
+        while (j < fragmentLen) {
+            int s = ucdn_get_script(fragment[j]);
+            if (s != current_script && s != UCDN_SCRIPT_COMMON && s != UCDN_SCRIPT_INHERITED) {
+                if (current_script == UCDN_SCRIPT_COMMON || current_script == UCDN_SCRIPT_INHERITED) {
+                    current_script = s;
+                } else {
+                    break;
+                }
+            }
+            j++;
+        }
+        
+        size_t run_len = j - i;
+        
+        size_t k = 0;
+        while (k < run_len) {
+            std::vector<uint32_t> remaining_utf32(state->utf32->begin() + start_idx + i + k, state->utf32->begin() + start_idx + j);
+            FontSlot* slot = state->font_selector(remaining_utf32);
+            
+            size_t c = k;
+            if (slot) {
+                while (c < run_len) {
+                    uint32_t cp = (*state->utf32)[start_idx + i + c];
+                    if (cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r' || (cp < 1114112 && slot->used_bitmap.size() > cp && slot->used_bitmap[cp])) {
+                        c++;
+                    } else {
+                        break;
+                    }
+                }
+                if (c == k) c = k + 1;
+            } else {
+                c = run_len;
+            }
+            
+            size_t sub_run_len = c - k;
+            
+            hb_buffer_t* hb_buffer = hb_buffer_create();
+            hb_buffer_add_utf32(hb_buffer, state->utf32->data(), state->utf32->size(), start_idx + i + k, sub_run_len);
+            hb_buffer_guess_segment_properties(hb_buffer);
+            hb_buffer_set_direction(hb_buffer, (bidiLevel & 1) ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+            
+            hb_font_t* run_hb_font = slot ? (slot->subset_hb_font ? slot->subset_hb_font : slot->hb_font) : nullptr;
+            float run_scale = 1.0f;
+            const std::string* run_pdf_name = nullptr;
+            if (slot) {
+                hb_face_t* face = hb_font_get_face(run_hb_font);
+                float upem = hb_face_get_upem(face);
+                if (upem == 0.0f) upem = 1000.0f;
+                run_scale = state->font_size / (upem * 64.0f);
+                run_pdf_name = &slot->pdf_name;
+            }
+
+            hb_shape(run_hb_font, hb_buffer, NULL, 0);
+            
+            unsigned int glyph_count;
+            hb_glyph_info_t* glyph_info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
+            hb_glyph_position_t* glyph_pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
+            
+            std::vector<LogicalGlyph> run_glyphs;
+            for (unsigned int gi = 0; gi < glyph_count; ++gi) {
+                LogicalGlyph g;
+                g.glyphid = glyph_info[gi].codepoint;
+                g.x_advance = glyph_pos[gi].x_advance * run_scale;
+                g.y_advance = glyph_pos[gi].y_advance * run_scale;
+                g.x_offset = glyph_pos[gi].x_offset * run_scale;
+                g.y_offset = glyph_pos[gi].y_offset * run_scale;
+                g.bidi_level = bidiLevel;
+                g.cluster = glyph_info[gi].cluster;
+                g.font_pdf_name = run_pdf_name;
+                g.slot = slot;
+                run_glyphs.push_back(g);
+                
+                if (slot) {
+                    uint32_t c_start = glyph_info[gi].cluster;
+                    uint32_t c_end = c_start + 1;
+                    if (bidiLevel & 1) { // RTL
+                        for (int k_gi = gi - 1; k_gi >= 0; --k_gi) {
+                            if (glyph_info[k_gi].cluster != c_start) {
+                                c_end = glyph_info[k_gi].cluster;
+                                break;
+                            }
+                        }
+                    } else { // LTR
+                        for (unsigned int k_gi = gi + 1; k_gi < glyph_count; ++k_gi) {
+                            if (glyph_info[k_gi].cluster != c_start) {
+                                c_end = glyph_info[k_gi].cluster;
+                                break;
+                            }
+                        }
+                    }
+                    if (c_end <= c_start || c_end > start_idx + i + k + sub_run_len) {
+                        c_end = start_idx + i + k + sub_run_len;
+                        if (c_end <= c_start) c_end = c_start + 1;
+                    }
+                    if (slot->gid_to_unicode.find(g.glyphid) == slot->gid_to_unicode.end()) {
+                        std::vector<uint32_t> unistr;
+                        for (uint32_t ci = c_start; ci < c_end; ++ci) {
+                            if (ci < state->utf32->size()) unistr.push_back((*state->utf32)[ci]);
+                        }
+                        slot->gid_to_unicode[g.glyphid] = unistr;
+                    }
+                }
+            }
+            
+            state->logical_glyphs->insert(state->logical_glyphs->end(), run_glyphs.begin(), run_glyphs.end());
+            hb_buffer_destroy(hb_buffer);
+            
+            k = c;
+        }
+        
+        i = j;
     }
-    
-    if (bidiLevel & 1) {
-        std::reverse(fragment_glyphs.begin(), fragment_glyphs.end());
-    }
-    
-    state->logical_glyphs->insert(state->logical_glyphs->end(), fragment_glyphs.begin(), fragment_glyphs.end());
-    hb_buffer_destroy(hb_buffer);
 }
 
-static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, hb_font_t* hb_font, float font_size, float max_width) {
+static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, FontSelectorFn font_selector, float font_size, float max_width) {
     std::vector<ShapedLine> lines;
     if (text.empty()) return lines;
     
-    hb_face_t* hb_face = hb_font_get_face(hb_font);
-    float upem = hb_face_get_upem(hb_face);
-    if (upem == 0.0f) upem = 1000.0f;
-    float scale = font_size / (upem * 64.0f);
-
-    bool has_rtl = false;
     std::vector<uint32_t> utf32 = Utf8ToUtf32(text);
-    for (uint32_t c : utf32) {
-        int bc = ucdn_get_bidi_class(c);
-        if (bc == UCDN_BIDI_CLASS_R || bc == UCDN_BIDI_CLASS_AL || bc == UCDN_BIDI_CLASS_RLE || bc == UCDN_BIDI_CLASS_RLO) {
-            has_rtl = true;
-            break;
-        }
-    }
-
     std::vector<LogicalGlyph> logical_glyphs;
 
-    if (!has_rtl) {
-        hb_buffer_t* hb_buffer = hb_buffer_create();
-        hb_buffer_add_utf8(hb_buffer, text.c_str(), -1, 0, -1);
-        hb_buffer_guess_segment_properties(hb_buffer);
-        hb_buffer_set_direction(hb_buffer, HB_DIRECTION_LTR);
-        hb_shape(hb_font, hb_buffer, NULL, 0);
-        
-        unsigned int glyph_count;
-        hb_glyph_info_t* glyph_info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
-        hb_glyph_position_t* glyph_pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
-        
-        for (unsigned int i = 0; i < glyph_count; ++i) {
-            LogicalGlyph g;
-            g.glyphid = glyph_info[i].codepoint;
-            g.x_advance = glyph_pos[i].x_advance * scale;
-            g.y_advance = glyph_pos[i].y_advance * scale;
-            g.x_offset = glyph_pos[i].x_offset * scale;
-            g.y_offset = glyph_pos[i].y_offset * scale;
-            g.bidi_level = 0;
-            g.cluster = glyph_info[i].cluster;
-            logical_glyphs.push_back(g);
-        }
-        hb_buffer_destroy(hb_buffer);
-    } else {
-        BidiStateInsert state;
-        state.utf32 = &utf32;
-        state.logical_glyphs = &logical_glyphs;
-        state.hb_font = hb_font;
-        state.scale = scale;
-        
-        fz_bidi_direction baseDir = FZ_BIDI_UNSET;
-        fz_bidi_fragment_text(nullptr, utf32.data(), utf32.size(), &baseDir, fz_bidi_insert_cb, &state, 0);
-    }
+    BidiStateInsert state;
+    state.utf32 = &utf32;
+    state.logical_glyphs = &logical_glyphs;
+    state.font_selector = font_selector;
+    state.font_size = font_size;
+    
+    fz_bidi_direction baseDir = FZ_BIDI_UNSET;
+    fz_bidi_fragment_text(nullptr, utf32.data(), utf32.size(), &baseDir, fz_bidi_insert_cb, &state, 0);
 
     auto wrap_and_reorder = [&](const std::vector<LogicalGlyph>& line_logical_glyphs, float width) {
         std::vector<LogicalGlyph> reordered = line_logical_glyphs;
@@ -206,7 +408,7 @@ static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, hb_font
         ShapedLine sl;
         sl.width = width;
         for (const auto& g : reordered) {
-            sl.glyphs.push_back({g.glyphid, g.x_advance, g.y_advance, g.x_offset, g.y_offset});
+            sl.glyphs.push_back({g.glyphid, g.x_advance, g.y_advance, g.x_offset, g.y_offset, g.font_pdf_name, g.slot});
         }
         return sl;
     };
@@ -219,16 +421,8 @@ static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, hb_font
     for (size_t i = 0; i < logical_glyphs.size(); ++i) {
         auto& g = logical_glyphs[i];
         uint32_t cluster = g.cluster;
-        bool is_space = false;
-        bool is_newline = false;
-        
-        if (has_rtl) {
-            is_space = (cluster < utf32.size() && utf32[cluster] == ' ');
-            is_newline = (cluster < utf32.size() && utf32[cluster] == '\n');
-        } else {
-            is_space = (cluster < text.size() && text[cluster] == ' ');
-            is_newline = (cluster < text.size() && text[cluster] == '\n');
-        }
+        bool is_space = (cluster < utf32.size() && utf32[cluster] == ' ');
+        bool is_newline = (cluster < utf32.size() && utf32[cluster] == '\n');
 
         if (is_newline) {
             lines.push_back(wrap_and_reorder(current_line_glyphs, current_width));
@@ -394,7 +588,7 @@ static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
 
 static std::pair<std::string, std::map<int, std::string>> CreateCIDFontObjects(
     const std::vector<uint8_t>& ttf_data, int start_obj_id, FT_Face face, const std::string& font_alias,
-    const std::unordered_set<uint32_t>& used_codepoints, hb_font_t* subset_hb_font) {
+    const std::map<uint32_t, std::vector<uint32_t>>& gid_to_unicode, hb_font_t* subset_hb_font) {
     int stream_obj_id    = start_obj_id;
     int descriptor_obj_id = start_obj_id + 1;
     int cidfont_obj_id   = start_obj_id + 2;
@@ -480,32 +674,36 @@ static std::pair<std::string, std::map<int, std::string>> CreateCIDFontObjects(
                        "<0000> <FFFF>\n"
                        "endcodespacerange\n";
     
-    std::map<FT_UInt, FT_ULong> cid_to_unicode;
-    FT_Select_Charmap(face, FT_ENCODING_UNICODE);
-    FT_UInt gindex;
-    FT_ULong charcode = FT_Get_First_Char(face, &gindex);
-    while (gindex != 0) {
-        if (charcode <= 0xFFFF) {
-            cid_to_unicode[gindex] = charcode;
-        }
-        charcode = FT_Get_Next_Char(face, charcode, &gindex);
-    }
-    
     std::vector<std::string> bfranges;
-    for (const auto& pair : cid_to_unicode) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "<%04X> <%04X> <%04lX>", pair.first, pair.first, pair.second);
-        bfranges.push_back(buf);
+    for (const auto& pair : gid_to_unicode) {
+        char buf[512];
+        uint32_t gid = pair.first;
+        std::string uni_str = "";
+        for (uint32_t cp : pair.second) {
+            char temp[20];
+            if (cp <= 0xFFFF) {
+                snprintf(temp, sizeof(temp), "%04X", cp);
+            } else {
+                uint16_t high = 0xD800 + ((cp - 0x10000) >> 10);
+                uint16_t low = 0xDC00 + ((cp - 0x10000) & 0x3FF);
+                snprintf(temp, sizeof(temp), "%04X%04X", high, low);
+            }
+            uni_str += temp;
+        }
+        if (!uni_str.empty()) {
+            snprintf(buf, sizeof(buf), "<%04X> <%s>", gid, uni_str.c_str());
+            bfranges.push_back(buf);
+        }
     }
     if (!bfranges.empty()) {
         size_t i = 0;
         while (i < bfranges.size()) {
             size_t chunk_size = std::min<size_t>(100, bfranges.size() - i);
-            cmap += std::to_string(chunk_size) + " beginbfrange\n";
+            cmap += std::to_string(chunk_size) + " beginbfchar\n";
             for (size_t j = 0; j < chunk_size; ++j) {
                 cmap += bfranges[i + j] + "\n";
             }
-            cmap += "endbfrange\n";
+            cmap += "endbfchar\n";
             i += chunk_size;
         }
     }
@@ -569,93 +767,7 @@ static size_t find_matching_dict_end(const std::string& s, size_t start) {
 // Font discovery: scan fonts_dir, classify each .ttf/.otf by bold/italic.
 // grid[bold_idx][italic_idx] — 0=false, 1=true.
 // -----------------------------------------------------------------------
-struct FontSlot {
-    std::vector<uint8_t> data;
-    FT_Face face = nullptr;
-    hb_font_t* hb_font = nullptr;
-    std::string pdf_name;   // e.g. "/F_WNZRN_0"
-    int type0_obj_id = -1;
-    bool used = false;
-    std::string family_name;
-    std::string family_name_norm;
-    bool has_black = false;
-    bool has_heavy = false;
-    bool has_light = false;
-    bool has_thin = false;
-    bool is_safe_fallback = false;
-    bool is_bold = false;
-    bool is_italic = false;
-    std::unordered_set<uint32_t> used_codepoints;
-    std::vector<uint8_t> used_bitmap;
 
-    std::vector<uint8_t> subset_data;
-    FT_Face subset_face = nullptr;
-    hb_font_t* subset_hb_font = nullptr;
-
-    ~FontSlot() {
-        if (subset_hb_font) hb_font_destroy(subset_hb_font);
-        if (subset_face) FT_Done_Face(subset_face);
-        if (hb_font) hb_font_destroy(hb_font);
-        if (face) FT_Done_Face(face);
-    }
-
-    FontSlot() = default;
-    FontSlot(const FontSlot&) = delete;
-    FontSlot& operator=(const FontSlot&) = delete;
-
-    FontSlot(FontSlot&& other) noexcept {
-        data = std::move(other.data);
-        face = other.face; other.face = nullptr;
-        hb_font = other.hb_font; other.hb_font = nullptr;
-        pdf_name = std::move(other.pdf_name);
-        type0_obj_id = other.type0_obj_id;
-        used = other.used;
-        family_name = std::move(other.family_name);
-        family_name_norm = std::move(other.family_name_norm);
-        has_black = other.has_black;
-        has_heavy = other.has_heavy;
-        has_light = other.has_light;
-        has_thin = other.has_thin;
-        is_safe_fallback = other.is_safe_fallback;
-        is_bold = other.is_bold;
-        is_italic = other.is_italic;
-        used_codepoints = std::move(other.used_codepoints);
-        used_bitmap = std::move(other.used_bitmap);
-        subset_data = std::move(other.subset_data);
-        subset_face = other.subset_face; other.subset_face = nullptr;
-        subset_hb_font = other.subset_hb_font; other.subset_hb_font = nullptr;
-    }
-    FontSlot& operator=(FontSlot&& other) noexcept {
-        if (this != &other) {
-            if (subset_hb_font) hb_font_destroy(subset_hb_font);
-            if (subset_face) FT_Done_Face(subset_face);
-            if (hb_font) hb_font_destroy(hb_font);
-            if (face) FT_Done_Face(face);
-            
-            data = std::move(other.data);
-            face = other.face; other.face = nullptr;
-            hb_font = other.hb_font; other.hb_font = nullptr;
-            pdf_name = std::move(other.pdf_name);
-            type0_obj_id = other.type0_obj_id;
-            used = other.used;
-            family_name = std::move(other.family_name);
-            family_name_norm = std::move(other.family_name_norm);
-            has_black = other.has_black;
-            has_heavy = other.has_heavy;
-            has_light = other.has_light;
-            has_thin = other.has_thin;
-            is_safe_fallback = other.is_safe_fallback;
-            is_bold = other.is_bold;
-            is_italic = other.is_italic;
-            used_codepoints = std::move(other.used_codepoints);
-            used_bitmap = std::move(other.used_bitmap);
-            subset_data = std::move(other.subset_data);
-            subset_face = other.subset_face; other.subset_face = nullptr;
-            subset_hb_font = other.subset_hb_font; other.subset_hb_font = nullptr;
-        }
-        return *this;
-    }
-};
 
 #include <mutex>
 static std::mutex g_fonts_mutex;
@@ -673,8 +785,8 @@ static void ScanFontsDir(const std::string& fonts_dir, FT_Library library, std::
         if (!entry.is_regular_file()) continue;
         std::string ext = entry.path().extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return std::tolower(c); });
-        // Only allow .ttf to avoid Adobe Acrobat OpenType CFF (OTTO) subsetting bugs
-        if (ext != ".ttf") continue;
+        
+        if (ext != ".ttf" && ext != ".otf") continue;
 
         // Read font bytes
         std::ifstream f(entry.path(), std::ios::binary | std::ios::ate);
@@ -684,15 +796,6 @@ static void ScanFontsDir(const std::string& fonts_dir, FT_Library library, std::
         f.seekg(0);
         std::vector<uint8_t> data((size_t)sz);
         if (!f.read(reinterpret_cast<char*>(data.data()), sz)) continue;
-        
-        // Adobe Acrobat has a massive bug/strictness issue with OpenType CFF fonts.
-        // It requires embedded CIDFontType0 CFF fonts to be CID-Keyed.
-        // But almost all modern CFF fonts (.otf or .ttf) are Name-Keyed.
-        // This causes Acrobat to reject the font entirely and render substitute garbage (&$&C).
-        // Skip CFF (OTTO) fonts entirely.
-        if (data.size() >= 4 && data[0] == 'O' && data[1] == 'T' && data[2] == 'T' && data[3] == 'O') {
-            continue;
-        }
 
         FT_Face face;
         if (FT_New_Memory_Face(library, data.data(), (FT_Long)sz, 0, &face)) continue;
@@ -855,6 +958,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             for (int i = 0; i < 2; i++) {
                 for (auto& slot : g_font_grid[b][i]) {
                     slot.used_codepoints.clear();
+                    slot.gid_to_unicode.clear();
                     if (!slot.used) {
                         slot.used = true;
                         slot.used_bitmap.assign(1114112, 0);
@@ -871,7 +975,6 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             }
         }
     }
-
     auto& font_grid = g_font_grid;
     auto& full_charset_cache = g_full_charset_cache;
 
@@ -896,14 +999,9 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             for (size_t f = 0; f < font_grid[b][i].size(); ++f) {
                 if (!check_font_index(b, i, f)) continue;
                 auto& slot = font_grid[b][i][f];
-                
                 if (slot.family_name_norm == target_norm) return &slot;
-                
-                if (slot.family_name_norm.find(target_norm) != std::string::npos) {
-                    return &slot;
-                } else if (slot.family_name_norm.size() >= 4 && target_norm.find(slot.family_name_norm) != std::string::npos) {
-                    return &slot;
-                }
+                if (slot.family_name_norm.find(target_norm) != std::string::npos) return &slot;
+                if (slot.family_name_norm.size() >= 4 && target_norm.find(slot.family_name_norm) != std::string::npos) return &slot;
             }
             return nullptr;
         };
@@ -919,6 +1017,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
 
         FontSlot* best = nullptr;
 
+        // 1. Strict match: 100% coverage + exact/partial name match
         if (!task_ff_norm.empty()) {
             best = find_name_in_grid(req_b, req_i, task_ff_norm);
             if (!best) {
@@ -933,6 +1032,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             }
         }
 
+        // 2. Strict match: 100% coverage + safe fallback font
         if (!best) {
             best = find_fallback_in_grid(req_b, req_i);
             if (!best) {
@@ -947,51 +1047,54 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             }
         }
         
+        // 3. Strict match: 100% coverage + any font
         if (!best) {
-            for (int b = 0; b < 2; b++) {
-                for (int i = 0; i < 2; i++) {
+            for (int b = 0; b < 2 && !best; b++) {
+                for (int i = 0; i < 2 && !best; i++) {
                     for (size_t f = 0; f < font_grid[b][i].size(); ++f) {
                         if (check_font_index(b, i, f)) {
                             best = &font_grid[b][i][f];
                             break;
                         }
                     }
-                    if (best) break;
-                }
-                if (best) break;
-            }
-        }
-
-        if (!best) {
-            for (size_t f = 0; f < font_grid[req_b][req_i].size(); ++f) {
-                if (check_font_index(req_b, req_i, f)) {
-                    best = &font_grid[req_b][req_i][f];
-                    break;
                 }
             }
         }
 
+        // 4. PARTIAL MATCH: If no font has 100% coverage, pick the one with the highest coverage
         if (!best) {
+            long long max_score = -1;
             for (int b = 0; b < 2; b++) {
                 for (int i = 0; i < 2; i++) {
-                    if (b == req_b && i == req_i) continue;
                     for (size_t f = 0; f < font_grid[b][i].size(); ++f) {
-                        if (check_font_index(b, i, f)) {
+                        const auto& cache = full_charset_cache[b][i][f];
+                        long long coverage = 0;
+                        for (uint32_t cp : utf32) {
+                            if (cp < 1114112 && cache[cp] != 0) coverage++;
+                        }
+                        if (coverage == 0) continue;
+
+                        long long style_bonus = 0;
+                        auto& slot = font_grid[b][i][f];
+                        if (!task_ff_norm.empty()) {
+                            if (slot.family_name_norm == task_ff_norm) style_bonus += 10000;
+                            else if (slot.family_name_norm.find(task_ff_norm) != std::string::npos) style_bonus += 5000;
+                            else if (task_ff_norm.find(slot.family_name_norm) != std::string::npos && slot.family_name_norm.size() >= 4) style_bonus += 2500;
+                        }
+                        if (b == req_b) style_bonus += 100;
+                        if (i == req_i) style_bonus += 100;
+
+                        long long score = (coverage * 1000000LL) + style_bonus;
+                        if (score > max_score) {
+                            max_score = score;
                             best = &font_grid[b][i][f];
-                            break;
                         }
                     }
-                    if (best) break;
                 }
-                if (best) break;
             }
         }
 
-        // -----------------------------------------------------------
-        // FINAL FALLBACK: Ignore missing glyphs (check_font_index).
-        // It's better to render text with "tofu boxes" (missing glyphs)
-        // than to completely drop the line.
-        // -----------------------------------------------------------
+        // 5. FINAL FALLBACK: No font has even 1 required character, just pick anything based on name or first available
         if (!best) {
             auto find_name_in_grid_no_check = [&](int b, int i, const std::string& target_norm) -> FontSlot* {
                 if (target_norm.empty()) return nullptr;
@@ -1019,7 +1122,6 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             }
             
             if (!best) {
-                // Just grab the first available font
                 for (int b = 0; b < 2 && !best; b++) {
                     for (int i = 0; i < 2 && !best; i++) {
                         if (!font_grid[b][i].empty()) best = &font_grid[b][i][0];
@@ -1031,16 +1133,46 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
         return best;
     };
 
+    auto make_font_selector = [&](const WinInsertTextTask& task) {
+        return [&](const std::vector<uint32_t>& run_utf32) -> FontSlot* {
+            return GetFontSlotFast(task, run_utf32);
+        };
+    };
+
     std::map<int, std::vector<FontSlot*>> precomputed_slots;
+    std::set<FontSlot*> all_used_slots;
     for (const auto& item : pages_tasks) {
         int page_index = item.first;
         for (const auto& task : item.second) {
             auto utf32 = Utf8ToUtf32(task.text);
-            FontSlot* slot = GetFontSlotFast(task, utf32);
-            precomputed_slots[page_index].push_back(slot);
-            if (slot) {
-                slot->used = true;
-                for (uint32_t cp : utf32) slot->used_codepoints.insert(cp);
+            
+            // Normalize Fullwidth and Typographic characters to ASCII
+            // Translation engines sometimes output these which are missing from many fonts.
+            NormalizeText(utf32);
+            
+            FontSlot* primary_slot = GetFontSlotFast(task, utf32);
+            precomputed_slots[page_index].push_back(primary_slot);
+            if (primary_slot) all_used_slots.insert(primary_slot);
+            
+            auto tracking_font_selector = [&](const std::vector<uint32_t>& run_utf32) -> FontSlot* {
+                FontSlot* slot = GetFontSlotFast(task, run_utf32);
+                if (slot) {
+                    slot->used = true;
+                    for (uint32_t cp : run_utf32) slot->used_codepoints.insert(cp);
+                    all_used_slots.insert(slot);
+                }
+                return slot;
+            };
+            
+            std::string clean_text = Utf32ToUtf8(utf32);
+            clean_text.erase(std::remove(clean_text.begin(), clean_text.end(), '\r'), clean_text.end());
+            
+            if (task.multiline) {
+                std::lock_guard<std::mutex> lock(global_shaping_mutex);
+                HarfbuzzWordWrap(clean_text, tracking_font_selector, task.font_size, task.x1 - task.x0);
+            } else {
+                std::lock_guard<std::mutex> lock(global_shaping_mutex);
+                HarfbuzzWordWrap(clean_text, tracking_font_selector, task.font_size, 1e9f);
             }
         }
     }
@@ -1059,11 +1191,39 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
                 auto& slot = font_grid[b][i][f_idx];
                 if (!slot.used) continue;
                 
-                // Bypass HarfBuzz subsetting entirely. Adobe Acrobat is notoriously strict
-                // about embedded subset fonts missing standard tables (like 'name', 'OS/2').
-                // By embedding the full original font, we guarantee 100% compatibility across
-                // all strict PDF viewers, including Edge and Acrobat.
-                slot.subset_data = slot.data;
+                bool is_cff = (slot.data.size() >= 4 && slot.data[0] == 'O' && slot.data[1] == 'T' && slot.data[2] == 'T' && slot.data[3] == 'O');
+                if (is_cff) {
+                    // Acrobat rejects name-keyed CFFs embedded as CIDFontType0.
+                    // hb-subset automatically converts name-keyed CFF to CID-keyed CFF.
+                    hb_subset_input_t* input = hb_subset_input_create_or_fail();
+                    if (input) {
+                        // Removed HB_SUBSET_FLAGS_RETAIN_GIDS so HarfBuzz automatically
+                        // does layout closure and keeps the GSUB tables in the subset font!
+                        hb_set_t* unicodes = hb_subset_input_unicode_set(input);
+                        for (uint32_t cp : slot.used_codepoints) {
+                            hb_set_add(unicodes, cp);
+                        }
+                        
+                        hb_face_t* source_face = hb_font_get_face(slot.hb_font);
+                        hb_face_t* subset_face = hb_subset_or_fail(source_face, input);
+                        if (subset_face) {
+                            hb_blob_t* blob = hb_face_reference_blob(subset_face);
+                            unsigned int length;
+                            const char* data_ptr = hb_blob_get_data(blob, &length);
+                            slot.subset_data = std::vector<uint8_t>(data_ptr, data_ptr + length);
+                            hb_blob_destroy(blob);
+                            hb_face_destroy(subset_face);
+                        } else {
+                            slot.subset_data = slot.data;
+                        }
+                        hb_subset_input_destroy(input);
+                    } else {
+                        slot.subset_data = slot.data;
+                    }
+                } else {
+                    // For TTF, full embedding is safe and guarantees compatibility
+                    slot.subset_data = slot.data;
+                }
                 
                 if (slot.subset_face == nullptr) {
                     FT_New_Memory_Face(g_ft_library, slot.subset_data.data(), slot.subset_data.size(), 0, &slot.subset_face);
@@ -1086,7 +1246,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
                 base_font_name = subset_tag + "+" + base_font_name;
                 
                 auto [pdf_name, objs] = CreateCIDFontObjects(
-                    slot.subset_data, next_obj_id, active_face, base_font_name, slot.used_codepoints, slot.subset_hb_font);
+                    slot.subset_data, next_obj_id, active_face, base_font_name, slot.gid_to_unicode, slot.subset_hb_font);
                 slot.pdf_name    = pdf_name;
                 slot.type0_obj_id = next_obj_id + 4;
                 next_obj_id += 5;
@@ -1110,351 +1270,368 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
     std::atomic<size_t> current_task{0};
 
     int num_threads = num_threads_opt;
+#ifdef __EMSCRIPTEN__
+    num_threads = 1;
+#else
     if (num_threads <= 0) num_threads = std::thread::hardware_concurrency();
     if (num_threads <= 0) num_threads = 4;
+#endif
     int actual_threads = std::min((int)num_threads, (int)task_list.size());
 
-    std::vector<std::thread> threads;
-    for (int t = 0; t < actual_threads; ++t) {
-        threads.emplace_back([&]() {
-            while (true) {
-                size_t i = current_task.fetch_add(1);
-                if (i >= task_list.size()) break;
-                
-                int page_index = task_list[i].first;
-                const auto& tasks = task_list[i].second;
+    auto worker_func = [&]() {
+        while (true) {
+            size_t i = current_task.fetch_add(1);
+            if (i >= task_list.size()) break;
+            
+            int page_index = task_list[i].first;
+            const auto& tasks = task_list[i].second;
 
-                WinExtract::WinPdfObject page_obj;
-                WinExtract::WinPageGeometry geo;
-                fz_matrix page_ctm;
-                fz_matrix inv_ctm;
-                
-                {
-                    std::lock_guard<std::mutex> lock(doc_mutex);
-                    page_obj = doc->read_obj(doc->get_page_id(page_index));
-                    geo = doc->get_page_geometry(page_index);
-                }
-                
-                std::string page_dict = page_obj.dict;
-                page_ctm = ComputePageCTM(geo);
-                inv_ctm = fz_invert_matrix(page_ctm);
+            WinExtract::WinPdfObject page_obj;
+            WinExtract::WinPageGeometry geo;
+            fz_matrix page_ctm;
+            fz_matrix inv_ctm;
+            
+            {
+                std::lock_guard<std::mutex> lock(doc_mutex);
+                page_obj = doc->read_obj(doc->get_page_id(page_index));
+                geo = doc->get_page_geometry(page_index);
+            }
+            
+            std::string page_dict = page_obj.dict;
+            page_ctm = ComputePageCTM(geo);
+            inv_ctm = fz_invert_matrix(page_ctm);
 
-                // Robust font injection handling inherited and indirect /Resources
-                bool font_injected = false;
-                int res_node_id = page_obj.id;
-                WinExtract::WinPdfObject res_node_obj = page_obj;
-                std::string res_dict = page_dict;
-                bool is_indirect_res = false;
-                int indirect_res_id = -1;
+            // Robust font injection handling inherited and indirect /Resources
+            bool font_injected = false;
+            int res_node_id = page_obj.id;
+            WinExtract::WinPdfObject res_node_obj = page_obj;
+            std::string res_dict = page_dict;
+            bool is_indirect_res = false;
+            int indirect_res_id = -1;
 
-                std::unordered_set<int> visited;
-                while (visited.insert(res_node_id).second) {
-                    size_t res_pos = res_dict.find("/Resources");
-                    if (res_pos != std::string::npos) {
-                        size_t val_start = res_dict.find_first_not_of(" \t\r\n", res_pos + 10);
-                        if (val_start != std::string::npos) {
-                            if (res_dict[val_start] == '<' && res_dict[val_start+1] == '<') {
-                                break; // Found inline /Resources
-                            } else if (std::isdigit((unsigned char)res_dict[val_start])) {
-                                int ref_id = std::stoi(res_dict.substr(val_start));
-                                indirect_res_id = ref_id;
-                                is_indirect_res = true;
-                                {
-                                    std::lock_guard<std::mutex> lock(doc_mutex);
-                                    res_node_obj = doc->read_obj(ref_id);
-                                }
-                                res_dict = res_node_obj.dict;
-                                res_node_id = ref_id;
-                                break;
-                            }
-                        }
-                    }
-                    size_t parent_pos = res_dict.find("/Parent");
-                    if (parent_pos != std::string::npos) {
-                        size_t val_start = res_dict.find_first_not_of(" \t\r\n", parent_pos + 7);
-                        if (val_start != std::string::npos && std::isdigit((unsigned char)res_dict[val_start])) {
+            std::unordered_set<int> visited;
+            while (visited.insert(res_node_id).second) {
+                size_t res_pos = res_dict.find("/Resources");
+                if (res_pos != std::string::npos) {
+                    size_t val_start = res_dict.find_first_not_of(" \t\r\n", res_pos + 10);
+                    if (val_start != std::string::npos) {
+                        if (res_dict[val_start] == '<' && res_dict[val_start+1] == '<') {
+                            break; // Found inline /Resources
+                        } else if (std::isdigit((unsigned char)res_dict[val_start])) {
                             int ref_id = std::stoi(res_dict.substr(val_start));
-                            res_node_id = ref_id;
+                            indirect_res_id = ref_id;
+                            is_indirect_res = true;
                             {
                                 std::lock_guard<std::mutex> lock(doc_mutex);
                                 res_node_obj = doc->read_obj(ref_id);
                             }
                             res_dict = res_node_obj.dict;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-
-                // Now we inject into res_dict
-                bool res_dict_modified = false;
-                if (is_indirect_res) {
-                    size_t font_key_pos = res_dict.find("/Font");
-                    if (font_key_pos != std::string::npos) {
-                        size_t val_start = res_dict.find_first_not_of(" \t\r\n", font_key_pos + 5);
-                        if (val_start != std::string::npos && res_dict[val_start] == '<' && res_dict[val_start+1] == '<') {
-                            size_t fdict_end = find_matching_dict_end(res_dict, val_start);
-                            if (fdict_end != std::string::npos) {
-                                res_dict.insert(fdict_end, all_font_entries);
-                                font_injected = true;
-                                res_dict_modified = true;
-                            }
-                        } else if (val_start != std::string::npos && std::isdigit((unsigned char)res_dict[val_start])) {
-                            int font_ref_id = std::stoi(res_dict.substr(val_start));
-                            WinExtract::WinPdfObject font_obj;
-                            {
-                                std::lock_guard<std::mutex> lock(doc_mutex);
-                                font_obj = doc->read_obj(font_ref_id);
-                            }
-                            std::string f_dict = font_obj.dict;
-                            size_t f_end = f_dict.rfind(">>");
-                            if (f_end != std::string::npos) {
-                                f_dict.insert(f_end, all_font_entries);
-                                std::lock_guard<std::mutex> lock(output_mutex);
-                                updated_objects[font_ref_id] = std::to_string(font_ref_id) + " " + std::to_string(font_obj.gen) + " obj\n" + f_dict + "\nendobj\n";
-                                font_injected = true;
-                            }
-                        }
-                    }
-                    if (!font_injected) {
-                        size_t endobj = res_dict.rfind(">>");
-                        if (endobj != std::string::npos) {
-                            res_dict.insert(endobj, " /Font << " + all_font_entries + ">> ");
-                            font_injected = true;
-                            res_dict_modified = true;
-                        }
-                    }
-                    if (font_injected && res_dict_modified) {
-                        std::lock_guard<std::mutex> lock(output_mutex);
-                        updated_objects[indirect_res_id] = std::to_string(res_node_obj.id) + " " + std::to_string(res_node_obj.gen) + " obj\n" + res_dict + "\nendobj\n";
-                    }
-                } else {
-                    size_t res_pos = res_dict.find("/Resources");
-                    if (res_pos != std::string::npos) {
-                        size_t res_dict_start = res_dict.find("<<", res_pos);
-                        if (res_dict_start != std::string::npos) {
-                            size_t res_dict_end = find_matching_dict_end(res_dict, res_dict_start);
-                            size_t search_end = (res_dict_end != std::string::npos) ? res_dict_end : res_dict.size();
-                            size_t font_key_pos = res_dict.find("/Font", res_dict_start);
-                            
-                            if (font_key_pos != std::string::npos && font_key_pos < search_end) {
-                                size_t val_start = res_dict.find_first_not_of(" \t\r\n", font_key_pos + 5);
-                                if (val_start != std::string::npos && val_start < search_end && res_dict[val_start] == '<' && res_dict[val_start+1] == '<') {
-                                    size_t fdict_end = find_matching_dict_end(res_dict, val_start);
-                                    if (fdict_end != std::string::npos) {
-                                        res_dict.insert(fdict_end, all_font_entries);
-                                        font_injected = true;
-                                        res_dict_modified = true;
-                                    }
-                                } else if (val_start != std::string::npos && val_start < search_end && std::isdigit((unsigned char)res_dict[val_start])) {
-                                    int font_ref_id = std::stoi(res_dict.substr(val_start));
-                                    WinExtract::WinPdfObject font_obj;
-                                    {
-                                        std::lock_guard<std::mutex> lock(doc_mutex);
-                                        font_obj = doc->read_obj(font_ref_id);
-                                    }
-                                    std::string f_dict = font_obj.dict;
-                                    size_t f_end = f_dict.rfind(">>");
-                                    if (f_end != std::string::npos) {
-                                        f_dict.insert(f_end, all_font_entries);
-                                        std::lock_guard<std::mutex> lock(output_mutex);
-                                        updated_objects[font_ref_id] = std::to_string(font_ref_id) + " " + std::to_string(font_obj.gen) + " obj\n" + f_dict + "\nendobj\n";
-                                        font_injected = true;
-                                    }
-                                }
-                            }
-                            if (!font_injected && res_dict_end != std::string::npos) {
-                                res_dict.insert(res_dict_end, " /Font << " + all_font_entries + ">> ");
-                                font_injected = true;
-                                res_dict_modified = true;
-                            }
-                        }
-                    } else {
-                        size_t endobj = page_dict.rfind(">>");
-                        if (endobj != std::string::npos) {
-                            page_dict.insert(endobj, " /Resources << /Font << " + all_font_entries + ">> >> ");
-                            font_injected = true;
-                            res_dict_modified = true;
-                        }
-                    }
-                    
-                    if (font_injected && res_dict_modified) {
-                        if (res_node_id == page_obj.id) {
-                            page_dict = res_dict;
-                        } else {
-                            std::lock_guard<std::mutex> lock(output_mutex);
-                            updated_objects[res_node_id] = std::to_string(res_node_obj.id) + " " + std::to_string(res_node_obj.gen) + " obj\n" + res_dict + "\nendobj\n";
-                        }
-                    }
-                }
-
-                std::string updated_obj_str = std::to_string(page_obj.id) + " " + std::to_string(page_obj.gen) + " obj\n" + page_dict + "\nendobj\n";
-
-                std::string page_stream;
-                page_stream += "q\n";
-                // Reset all text state parameters to isolate from previous content streams
-                page_stream += "0 Tc 0 Tw 100 Tz 0 TL 0 Tr 0 Ts\n";
-
-                std::vector<FontSlot*> p_slots = precomputed_slots[page_index];
-                size_t task_idx = 0;
-
-                for (const auto& task : tasks) {
-                    float bbox_w = task.x1 - task.x0;
-                    float bbox_h = task.y1 - task.y0;
-                    FontSlot* slot = p_slots[task_idx++];
-                    if (bbox_w <= 0 || bbox_h <= 0 || !slot) continue;
-
-                    hb_font_t* cur_hb_font = slot->subset_hb_font ? slot->subset_hb_font : slot->hb_font;
-                    const std::string& cur_font_name = slot->pdf_name;
-
-                    float fs = task.font_size;
-                    std::vector<ShapedLine> lines;
-                    
-                    std::string clean_text = task.text;
-                    clean_text.erase(std::remove(clean_text.begin(), clean_text.end(), '\r'), clean_text.end());
-
-                    float spacing_ratio = 1.0f;
-                    if (task.multiline) {
-                        std::lock_guard<std::mutex> lock(global_shaping_mutex);
-                        lines = HarfbuzzWordWrap(clean_text, cur_hb_font, fs, bbox_w);
-                    } else {
-                        {
-                            std::lock_guard<std::mutex> lock(global_shaping_mutex);
-                            lines = HarfbuzzWordWrap(clean_text, cur_hb_font, fs, 1e9f);
-                        }
-                        
-                        if (!lines.empty()) {
-                            float total_w = 0.0f;
-                            for (const auto& ln : lines) total_w += ln.width;
-
-                            if (total_w > bbox_w && total_w > 0.0f) {
-                                if (fit_by_spacing) {
-                                    spacing_ratio = bbox_w / total_w;
-                                } else {
-                                    fs = fs * (bbox_w / total_w);
-                                    {
-                                        std::lock_guard<std::mutex> lock(global_shaping_mutex);
-                                        lines = HarfbuzzWordWrap(clean_text, cur_hb_font, fs, 1e9f);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (lines.empty()) continue;
-
-                    auto to_pdf = [&inv_ctm](float xi, float yi) -> std::pair<float, float> {
-                        return { xi * inv_ctm.a + yi * inv_ctm.c + inv_ctm.e, xi * inv_ctm.b + yi * inv_ctm.d + inv_ctm.f };
-                    };
-
-                    float ascender_ratio = 0.8f;
-                    FT_Face face = nullptr;
-                    if (slot) {
-                        face = slot->subset_face ? slot->subset_face : slot->face;
-                        if (face && face->units_per_EM > 0) {
-                            ascender_ratio = (float)face->ascender / (float)face->units_per_EM;
-                        }
-                    }
-                    float box_h = task.y1 - task.y0;
-                    float leading = box_h - fs;
-                    float baseline_y_img = task.y0 + (leading > 0 ? leading / 2.0f : 0.0f) + fs * ascender_ratio;
-                    if (baseline_y_img > task.y1) baseline_y_img = task.y1;
-
-                    auto sanitize_commas = [](char* buf) {
-                        for (char* p = buf; *p; ++p) {
-                            if (*p == ',') *p = '.';
-                        }
-                    };
-
-                    page_stream += "BT\n";
-                    char font_buf[80];
-                    snprintf(font_buf, sizeof(font_buf), "%s %.3f Tf\n", cur_font_name.c_str(), fs);
-                    sanitize_commas(font_buf);
-                    page_stream += font_buf;
-
-                    char color_buf[64];
-                    snprintf(color_buf, sizeof(color_buf), "%.3f %.3f %.3f rg\n", task.r / 255.0f, task.g / 255.0f, task.b / 255.0f);
-                    sanitize_commas(color_buf);
-                    page_stream += color_buf;
-
-                    bool synth_italic = task.italic && !slot->is_italic;
-                    bool synth_bold = task.bold && !slot->is_bold;
-
-                    if (synth_bold) {
-                        page_stream += "2 Tr\n";
-                        char stroke_color[64];
-                        snprintf(stroke_color, sizeof(stroke_color), "%.3f %.3f %.3f RG\n", task.r / 255.0f, task.g / 255.0f, task.b / 255.0f);
-                        sanitize_commas(stroke_color);
-                        page_stream += stroke_color;
-                        char lw_buf[64];
-                        snprintf(lw_buf, sizeof(lw_buf), "%.4f w\n", fs * 0.03f);
-                        sanitize_commas(lw_buf);
-                        page_stream += lw_buf;
-                    }
-
-                    float skew = synth_italic ? 0.2125f : 0.0f;
-
-                    bool is_rtl_line = false;
-                    std::vector<uint32_t> utf32 = Utf8ToUtf32(clean_text);
-                    for (uint32_t c : utf32) {
-                        int bc = ucdn_get_bidi_class(c);
-                        if (bc == UCDN_BIDI_CLASS_R || bc == UCDN_BIDI_CLASS_AL || bc == UCDN_BIDI_CLASS_RLE || bc == UCDN_BIDI_CLASS_RLO) {
-                            is_rtl_line = true;
+                            res_node_id = ref_id;
                             break;
                         }
                     }
-
-                    float cur_y_img = baseline_y_img;
-                    for (const auto& line : lines) {
-                        float cur_x_img = task.x0;
-                        if (is_rtl_line && line.width < bbox_w) {
-                            cur_x_img = task.x1 - line.width;
-                        }
-                        
-                        float line_spacing_ratio = spacing_ratio;
-                        if (fit_by_spacing && line.width > bbox_w && line.width > 0.0f) {
-                            line_spacing_ratio = bbox_w / line.width;
-                        }
-
-                        for (const auto& g : line.glyphs) {
-                            float xi = cur_x_img + g.x_offset;
-                            float yi = cur_y_img + g.y_offset;
-
-                            auto [xp, yp] = to_pdf(xi, yi);
-
-                            char tm_buf[128];
-                            snprintf(tm_buf, sizeof(tm_buf), "%.4f 0 %.4f 1 %.3f %.3f Tm\n", line_spacing_ratio, skew, xp, yp);
-                            sanitize_commas(tm_buf);
-                            page_stream += tm_buf;
-                            page_stream += create_hex_string_single(g.id) + " Tj\n";
-                            cur_x_img += g.x_advance * line_spacing_ratio;
-                        }
-                        cur_y_img += fs * 1.2f;
-                    }
-
-                    if (synth_bold) {
-                        page_stream += "0 Tr\n";
-                    }
-                    page_stream += "ET\n";
                 }
-                
-                page_stream += "Q\n";
-                std::vector<uint8_t> stream_data(page_stream.begin(), page_stream.end());
-                std::vector<uint8_t> compressed_stream = compress_zlib(stream_data);
-
-                {
-                    std::lock_guard<std::mutex> lock(output_mutex);
-                    updated_objects[page_obj.id] = updated_obj_str;
-                    pages_streams[page_index] = std::move(compressed_stream);
+                size_t parent_pos = res_dict.find("/Parent");
+                if (parent_pos != std::string::npos) {
+                    size_t val_start = res_dict.find_first_not_of(" \t\r\n", parent_pos + 7);
+                    if (val_start != std::string::npos && std::isdigit((unsigned char)res_dict[val_start])) {
+                        int ref_id = std::stoi(res_dict.substr(val_start));
+                        res_node_id = ref_id;
+                        {
+                            std::lock_guard<std::mutex> lock(doc_mutex);
+                            res_node_obj = doc->read_obj(ref_id);
+                        }
+                        res_dict = res_node_obj.dict;
+                        continue;
+                    }
                 }
-                
-                int processed = ++pages_processed;
-                if (progress_cb) progress_cb(processed, total_pages);
+                break;
             }
-        });
-    }
 
-    for (auto& th : threads) {
-        if (th.joinable()) th.join();
+            // Now we inject into res_dict
+            bool res_dict_modified = false;
+            if (is_indirect_res) {
+                size_t font_key_pos = res_dict.find("/Font");
+                if (font_key_pos != std::string::npos) {
+                    size_t val_start = res_dict.find_first_not_of(" \t\r\n", font_key_pos + 5);
+                    if (val_start != std::string::npos && res_dict[val_start] == '<' && res_dict[val_start+1] == '<') {
+                        size_t fdict_end = find_matching_dict_end(res_dict, val_start);
+                        if (fdict_end != std::string::npos) {
+                            res_dict.insert(fdict_end, all_font_entries);
+                            font_injected = true;
+                            res_dict_modified = true;
+                        }
+                    } else if (val_start != std::string::npos && std::isdigit((unsigned char)res_dict[val_start])) {
+                        int font_ref_id = std::stoi(res_dict.substr(val_start));
+                        WinExtract::WinPdfObject font_obj;
+                        {
+                            std::lock_guard<std::mutex> lock(doc_mutex);
+                            font_obj = doc->read_obj(font_ref_id);
+                        }
+                        std::string f_dict = font_obj.dict;
+                        size_t f_end = f_dict.rfind(">>");
+                        if (f_end != std::string::npos) {
+                            f_dict.insert(f_end, all_font_entries);
+                            std::lock_guard<std::mutex> lock(output_mutex);
+                            updated_objects[font_ref_id] = std::to_string(font_ref_id) + " " + std::to_string(font_obj.gen) + " obj\n" + f_dict + "\nendobj\n";
+                            font_injected = true;
+                        }
+                    }
+                }
+                if (!font_injected) {
+                    size_t endobj = res_dict.rfind(">>");
+                    if (endobj != std::string::npos) {
+                        res_dict.insert(endobj, " /Font << " + all_font_entries + ">> ");
+                        font_injected = true;
+                        res_dict_modified = true;
+                    }
+                }
+                if (font_injected && res_dict_modified) {
+                    std::lock_guard<std::mutex> lock(output_mutex);
+                    updated_objects[indirect_res_id] = std::to_string(res_node_obj.id) + " " + std::to_string(res_node_obj.gen) + " obj\n" + res_dict + "\nendobj\n";
+                }
+            } else {
+                size_t res_pos = res_dict.find("/Resources");
+                if (res_pos != std::string::npos) {
+                    size_t res_dict_start = res_dict.find("<<", res_pos);
+                    if (res_dict_start != std::string::npos) {
+                        size_t res_dict_end = find_matching_dict_end(res_dict, res_dict_start);
+                        size_t search_end = (res_dict_end != std::string::npos) ? res_dict_end : res_dict.size();
+                        size_t font_key_pos = res_dict.find("/Font", res_dict_start);
+                        
+                        if (font_key_pos != std::string::npos && font_key_pos < search_end) {
+                            size_t val_start = res_dict.find_first_not_of(" \t\r\n", font_key_pos + 5);
+                            if (val_start != std::string::npos && val_start < search_end && res_dict[val_start] == '<' && res_dict[val_start+1] == '<') {
+                                size_t fdict_end = find_matching_dict_end(res_dict, val_start);
+                                if (fdict_end != std::string::npos) {
+                                    res_dict.insert(fdict_end, all_font_entries);
+                                    font_injected = true;
+                                    res_dict_modified = true;
+                                }
+                            } else if (val_start != std::string::npos && val_start < search_end && std::isdigit((unsigned char)res_dict[val_start])) {
+                                int font_ref_id = std::stoi(res_dict.substr(val_start));
+                                WinExtract::WinPdfObject font_obj;
+                                {
+                                    std::lock_guard<std::mutex> lock(doc_mutex);
+                                    font_obj = doc->read_obj(font_ref_id);
+                                }
+                                std::string f_dict = font_obj.dict;
+                                size_t f_end = f_dict.rfind(">>");
+                                if (f_end != std::string::npos) {
+                                    f_dict.insert(f_end, all_font_entries);
+                                    std::lock_guard<std::mutex> lock(output_mutex);
+                                    updated_objects[font_ref_id] = std::to_string(font_ref_id) + " " + std::to_string(font_obj.gen) + " obj\n" + f_dict + "\nendobj\n";
+                                    font_injected = true;
+                                }
+                            }
+                        }
+                        if (!font_injected && res_dict_end != std::string::npos) {
+                            res_dict.insert(res_dict_end, " /Font << " + all_font_entries + ">> ");
+                            font_injected = true;
+                            res_dict_modified = true;
+                        }
+                    }
+                } else {
+                    size_t endobj = page_dict.rfind(">>");
+                    if (endobj != std::string::npos) {
+                        page_dict.insert(endobj, " /Resources << /Font << " + all_font_entries + ">> >> ");
+                        font_injected = true;
+                        res_dict_modified = true;
+                    }
+                }
+                
+                if (font_injected && res_dict_modified) {
+                    if (res_node_id == page_obj.id) {
+                        page_dict = res_dict;
+                    } else {
+                        std::lock_guard<std::mutex> lock(output_mutex);
+                        updated_objects[res_node_id] = std::to_string(res_node_obj.id) + " " + std::to_string(res_node_obj.gen) + " obj\n" + res_dict + "\nendobj\n";
+                    }
+                }
+            }
+
+            std::string updated_obj_str = std::to_string(page_obj.id) + " " + std::to_string(page_obj.gen) + " obj\n" + page_dict + "\nendobj\n";
+
+            std::string page_stream;
+            page_stream += "q\n";
+            // Reset all text state parameters to isolate from previous content streams
+            page_stream += "0 Tc 0 Tw 100 Tz 0 TL 0 Tr 0 Ts\n";
+
+            std::vector<FontSlot*> p_slots = precomputed_slots[page_index];
+            size_t task_idx = 0;
+
+            for (const auto& task : tasks) {
+                float bbox_w = task.x1 - task.x0;
+                float bbox_h = task.y1 - task.y0;
+                FontSlot* slot = p_slots[task_idx++];
+                if (bbox_w <= 0 || bbox_h <= 0 || !slot) continue;
+
+                const std::string& cur_font_name = slot->pdf_name;
+                auto font_selector = make_font_selector(task);
+
+                float fs = task.font_size;
+                std::vector<ShapedLine> lines;
+                
+                std::vector<uint32_t> run_utf32_norm = Utf8ToUtf32(task.text);
+                NormalizeText(run_utf32_norm);
+                std::string clean_text = Utf32ToUtf8(run_utf32_norm);
+                clean_text.erase(std::remove(clean_text.begin(), clean_text.end(), '\r'), clean_text.end());
+
+                float spacing_ratio = 1.0f;
+                if (task.multiline) {
+                    std::lock_guard<std::mutex> lock(global_shaping_mutex);
+                    lines = HarfbuzzWordWrap(clean_text, font_selector, fs, bbox_w);
+                } else {
+                    {
+                        std::lock_guard<std::mutex> lock(global_shaping_mutex);
+                        lines = HarfbuzzWordWrap(clean_text, font_selector, fs, 1e9f);
+                    }
+                    
+                    if (!lines.empty()) {
+                        float total_w = 0.0f;
+                        for (const auto& ln : lines) total_w += ln.width;
+
+                        if (total_w > bbox_w && total_w > 0.0f) {
+                            if (fit_by_spacing) {
+                                spacing_ratio = bbox_w / total_w;
+                            } else {
+                                fs = fs * (bbox_w / total_w);
+                                {
+                                    std::lock_guard<std::mutex> lock(global_shaping_mutex);
+                                    lines = HarfbuzzWordWrap(clean_text, font_selector, fs, 1e9f);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (lines.empty()) continue;
+
+                auto to_pdf = [&inv_ctm](float xi, float yi) -> std::pair<float, float> {
+                    return { xi * inv_ctm.a + yi * inv_ctm.c + inv_ctm.e, xi * inv_ctm.b + yi * inv_ctm.d + inv_ctm.f };
+                };
+
+                float ascender_ratio = 0.8f;
+                FT_Face face = nullptr;
+                if (slot) {
+                    face = slot->subset_face ? slot->subset_face : slot->face;
+                    if (face && face->units_per_EM > 0) {
+                        ascender_ratio = (float)face->ascender / (float)face->units_per_EM;
+                    }
+                }
+                float box_h = task.y1 - task.y0;
+                float leading = box_h - fs;
+                float baseline_y_img = task.y0 + (leading > 0 ? leading / 2.0f : 0.0f) + fs * ascender_ratio;
+                if (baseline_y_img > task.y1) baseline_y_img = task.y1;
+
+                auto sanitize_commas = [](char* buf) {
+                    for (char* p = buf; *p; ++p) {
+                        if (*p == ',') *p = '.';
+                    }
+                };
+
+                page_stream += "BT\n";
+                std::string active_font_name = "";
+
+                char color_buf[64];
+                snprintf(color_buf, sizeof(color_buf), "%.3f %.3f %.3f rg\n", task.r / 255.0f, task.g / 255.0f, task.b / 255.0f);
+                sanitize_commas(color_buf);
+                page_stream += color_buf;
+
+                bool synth_italic = task.italic && !slot->is_italic;
+                bool synth_bold = task.bold && !slot->is_bold;
+
+                if (synth_bold) {
+                    page_stream += "2 Tr\n";
+                    char stroke_color[64];
+                    snprintf(stroke_color, sizeof(stroke_color), "%.3f %.3f %.3f RG\n", task.r / 255.0f, task.g / 255.0f, task.b / 255.0f);
+                    sanitize_commas(stroke_color);
+                    page_stream += stroke_color;
+                    char lw_buf[64];
+                    snprintf(lw_buf, sizeof(lw_buf), "%.4f w\n", fs * 0.03f);
+                    sanitize_commas(lw_buf);
+                    page_stream += lw_buf;
+                }
+
+                float skew = synth_italic ? 0.2125f : 0.0f;
+
+                bool is_rtl_line = false;
+                std::vector<uint32_t> utf32 = Utf8ToUtf32(clean_text);
+                for (uint32_t c : utf32) {
+                    int bc = ucdn_get_bidi_class(c);
+                    if (bc == UCDN_BIDI_CLASS_R || bc == UCDN_BIDI_CLASS_AL || bc == UCDN_BIDI_CLASS_RLE || bc == UCDN_BIDI_CLASS_RLO) {
+                        is_rtl_line = true;
+                        break;
+                    }
+                }
+
+                float cur_y_img = baseline_y_img;
+                for (const auto& line : lines) {
+                    float cur_x_img = task.x0;
+                    if (is_rtl_line && line.width < bbox_w) {
+                        cur_x_img = task.x1 - line.width;
+                    }
+                    
+                    float line_spacing_ratio = spacing_ratio;
+                    if (fit_by_spacing && line.width > bbox_w && line.width > 0.0f) {
+                        line_spacing_ratio = bbox_w / line.width;
+                    }
+
+                    for (const auto& g : line.glyphs) {
+                        float xi = cur_x_img + g.x_offset;
+                        float yi = cur_y_img + g.y_offset;
+
+                        auto [xp, yp] = to_pdf(xi, yi);
+
+                        std::string g_font = g.font_pdf_name ? *g.font_pdf_name : cur_font_name;
+                        if (g_font != active_font_name) {
+                            char font_buf[128];
+                            snprintf(font_buf, sizeof(font_buf), "%s %.3f Tf\n", g_font.c_str(), fs);
+                            sanitize_commas(font_buf);
+                            page_stream += font_buf;
+                            active_font_name = g_font;
+                        }
+
+                        char tm_buf[128];
+                        snprintf(tm_buf, sizeof(tm_buf), "%.4f 0 %.4f 1 %.3f %.3f Tm\n", line_spacing_ratio, skew, xp, yp);
+                        sanitize_commas(tm_buf);
+                        page_stream += tm_buf;
+                        page_stream += create_hex_string_single(g.id) + " Tj\n";
+                        cur_x_img += g.x_advance * line_spacing_ratio;
+                    }
+                    cur_y_img += fs * 1.2f;
+                }
+
+                if (synth_bold) {
+                    page_stream += "0 Tr\n";
+                }
+                page_stream += "ET\n";
+            }
+            
+            page_stream += "Q\n";
+            std::vector<uint8_t> stream_data(page_stream.begin(), page_stream.end());
+            std::vector<uint8_t> compressed_stream = compress_zlib(stream_data);
+
+            {
+                std::lock_guard<std::mutex> lock(output_mutex);
+                updated_objects[page_obj.id] = updated_obj_str;
+                pages_streams[page_index] = std::move(compressed_stream);
+            }
+            
+            int processed = ++pages_processed;
+            if (progress_cb) progress_cb(processed, total_pages);
+        }
+    };
+
+    if (actual_threads <= 1) {
+        worker_func();
+    } else {
+        std::vector<std::thread> threads;
+        for (int t = 0; t < actual_threads; ++t) {
+            threads.emplace_back(worker_func);
+        }
+        for (auto& th : threads) {
+            if (th.joinable()) th.join();
+        }
     }
     auto t_pages_loop = std::chrono::high_resolution_clock::now();
 
@@ -1463,6 +1640,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
         for (int i = 0; i < 2; i++) {
             for (auto& slot : font_grid[b][i]) {
                 slot.used_codepoints.clear();
+                slot.gid_to_unicode.clear();
                 if (slot.subset_hb_font) { hb_font_destroy(slot.subset_hb_font); slot.subset_hb_font = nullptr; }
                 if (slot.subset_face) { FT_Done_Face(slot.subset_face); slot.subset_face = nullptr; }
                 slot.subset_data.clear();
