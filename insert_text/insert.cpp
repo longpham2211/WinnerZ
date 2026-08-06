@@ -254,7 +254,7 @@ static void fz_bidi_insert_cb(const uint32_t *fragment, size_t fragmentLen, int 
     
     size_t i = 0;
     while (i < fragmentLen) {
-        int current_script = ucdn_get_script(fragment[i]);
+        int current_script = ucdn_get_script(fragment[i]);  
         size_t j = i + 1;
         
         while (j < fragmentLen) {
