@@ -9,6 +9,7 @@
 #include "cmap_table.hpp"
 #include "unicode.hpp"
 #include "type_3.hpp"
+#include "tex_font_mappings.hpp"
 #include <fstream>
 #include <memory>
 #include <algorithm>
@@ -4829,10 +4830,8 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                         }
                     }
 
-                   
                     bool has_invalid = false;
                     for (int& ucs : unicode_seq) {
-                        // [FIX]: Remap common WinAnsi characters in the 128-159 range
                         if (ucs >= 128 && ucs <= 159) {
                             static const unsigned short win_ansi_to_unicode[32] = {
                                 0x20AC, 0x0000, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
@@ -4841,9 +4840,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                                 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x0000, 0x017E, 0x0178
                             };
                             unsigned short mapped = win_ansi_to_unicode[ucs - 128];
-                            if (mapped != 0) {
-                                ucs = mapped;
-                            }
+                            if (mapped != 0) ucs = mapped;
                         }
 
                         if (ucs >= 0 && ucs < 32 && ucs != 9 && ucs != 10 && ucs != 13) {
@@ -5278,6 +5275,8 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                     active_w2_map = nullptr;
                     st.wmode = 0;
 
+                    std::string real_base_font_name = "";
+
                     const std::string lower_font = to_lower_ascii(normalize_pdf_font_name(st.font_name));
                     if (lower_font.find("bold") != std::string::npos ||
                         lower_font.find("black") != std::string::npos ||
@@ -5320,6 +5319,9 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                         active_is_serif = vit->second.is_serif;
                         active_is_mono = vit->second.is_mono;
                         st.wmode = vit->second.wmode;
+                        if (!vit->second.base_font.empty()) {
+                            real_base_font_name = vit->second.base_font;
+                        }
                     }
 
                     auto wit = font_width_map.find(st.font_name);
@@ -5346,6 +5348,10 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                     auto w2it = font_w2_map.find(st.font_name);
                     if (w2it != font_w2_map.end()) {
                         active_w2_map = w2it->second.get();
+                    }
+
+                    if (!real_base_font_name.empty()) {
+                        st.font_name = real_base_font_name;
                     }
 
                 }
@@ -7113,11 +7119,20 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
             }
         }
 
+std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFont");
+        if (base_font_name.empty() && is_type0_subtype) {
+            std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
+            if (!descendant_ids.empty()) {
+                WinPdfObject cid_font_obj = read_obj(descendant_ids.front());
+                base_font_name = parse_name_value_after_key(cid_font_obj.dict, "/BaseFont");
+            }
+        }
+        std::string lower_font = to_lower_ascii(normalize_pdf_font_name(base_font_name));
+        
+
         for (auto it_cmap = cmap.begin(); it_cmap != cmap.end(); ) {
             bool has_invalid = false;
             for (int& ucs : it_cmap->second) {
-                // [FIX]: Remap common WinAnsi characters in the 128-159 range
-                // which are often incorrectly used in ToUnicode maps.
                 if (ucs >= 128 && ucs <= 159) {
                     static const unsigned short win_ansi_to_unicode[32] = {
                         0x20AC, 0x0000, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
@@ -7126,9 +7141,7 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
                         0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x0000, 0x017E, 0x0178
                     };
                     unsigned short mapped = win_ansi_to_unicode[ucs - 128];
-                    if (mapped != 0) {
-                        ucs = mapped;
-                    }
+                    if (mapped != 0) ucs = mapped;
                 }
 
                 if (ucs >= 0 && ucs < 32 && ucs != 9 && ucs != 10 && ucs != 13) {
@@ -7225,6 +7238,29 @@ WinFontUnicodeMap WinPdfDocument::get_page_font_unicode_map(int page_idx) {
         if (is_type3_subtype) {
             apply_type3_ascii_fallback(cmap);
         }
+
+        const std::unordered_map<int, int>* final_fallback = nullptr;
+        if (lower_font.find("cmmi") != std::string::npos) {
+            final_fallback = &get_oml_mapping();
+        } else if (lower_font.find("cmsy") != std::string::npos) {
+            final_fallback = &get_oms_mapping();
+        } else if (lower_font.find("symbol") != std::string::npos) {
+            final_fallback = &get_symbol_mapping();
+        } else if (lower_font.find("zapfdingbats") != std::string::npos || lower_font.find("dingbats") != std::string::npos) {
+            final_fallback = &get_zapf_dingbats_mapping();
+        }
+
+        if (final_fallback) {
+            for (int i = 0; i <= 255; ++i) {
+                if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
+                    auto it_fallback = final_fallback->find(i);
+                    if (it_fallback != final_fallback->end()) {
+                        cmap[i] = {it_fallback->second};
+                    }
+                }
+            }
+        }
+
 
         if (!cmap.empty()) {
             cached_unicode_maps[font_obj_id] = std::make_shared<const std::unordered_map<int, WinUnicodeSequence>>(std::move(cmap));
@@ -8410,20 +8446,44 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                 }
             }
 
+std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFont");
+        if (base_font_name.empty() && is_type0_subtype) {
+            std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
+            if (!descendant_ids.empty()) {
+                WinPdfObject cid_font_obj = read_obj(descendant_ids.front());
+                base_font_name = parse_name_value_after_key(cid_font_obj.dict, "/BaseFont");
+            }
+        }
+        std::string lower_font = to_lower_ascii(normalize_pdf_font_name(base_font_name));
+
+
             for (auto it_cmap = cmap.begin(); it_cmap != cmap.end(); ) {
-                bool has_invalid = false;
-                for (int ucs : it_cmap->second) {
-                    if ((ucs < 32 && ucs != 9 && ucs != 10 && ucs != 13) || (ucs >= 127 && ucs < 160)) {
-                        has_invalid = true;
-                        break;
-                    }
+            bool has_invalid = false;
+            for (int& ucs : it_cmap->second) {
+                if (ucs >= 128 && ucs <= 159) {
+                    static const unsigned short win_ansi_to_unicode[32] = {
+                        0x20AC, 0x0000, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+                        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x0000, 0x017D, 0x0000,
+                        0x0000, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+                        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x0000, 0x017E, 0x0178
+                    };
+                    unsigned short mapped = win_ansi_to_unicode[ucs - 128];
+                    if (mapped != 0) ucs = mapped;
                 }
-                if (has_invalid) {
-                    it_cmap = cmap.erase(it_cmap);
-                } else {
-                    ++it_cmap;
+
+
+
+                if (ucs >= 0 && ucs < 32 && ucs != 9 && ucs != 10 && ucs != 13) {
+                    has_invalid = true;
+                    break;
                 }
             }
+            if (has_invalid) {
+                it_cmap = cmap.erase(it_cmap);
+            } else {
+                ++it_cmap;
+            }
+        }
 
             if (is_type0_subtype && cmap.empty()) {
                 std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
@@ -8483,6 +8543,29 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
                     for (const auto& kv : fallback) {
                         if (cmap.find(kv.first) == cmap.end()) {
                             cmap[kv.first] = {kv.second};
+                        }
+                    }
+                }
+
+            }
+
+            const std::unordered_map<int, int>* final_fallback = nullptr;
+            if (lower_font.find("cmmi") != std::string::npos) {
+                final_fallback = &get_oml_mapping();
+            } else if (lower_font.find("cmsy") != std::string::npos) {
+                final_fallback = &get_oms_mapping();
+            } else if (lower_font.find("symbol") != std::string::npos) {
+                final_fallback = &get_symbol_mapping();
+            } else if (lower_font.find("zapfdingbats") != std::string::npos || lower_font.find("dingbats") != std::string::npos) {
+                final_fallback = &get_zapf_dingbats_mapping();
+            }
+
+            if (final_fallback) {
+                for (int i = 0; i <= 255; ++i) {
+                    if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
+                        auto it_fallback = final_fallback->find(i);
+                        if (it_fallback != final_fallback->end()) {
+                            cmap[i] = {it_fallback->second};
                         }
                     }
                 }
@@ -10966,6 +11049,32 @@ bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
     if (!encoding_dict.empty()) {
         std::map<int, int> dummy;
         apply_differences_to_map(encoding_dict, dummy, &diff_names);
+    }
+
+    std::string base_font = parse_name_value_after_key(font_obj.dict, "/BaseFont");
+    std::string base_font_lower = base_font;
+    std::transform(base_font_lower.begin(), base_font_lower.end(), base_font_lower.begin(), [](unsigned char c){ return std::tolower(c); });
+
+    const std::unordered_map<int, int>* fallback_mapping = nullptr;
+    if (base_font_lower.find("cmmi") != std::string::npos) {
+        fallback_mapping = &get_oml_mapping();
+    } else if (base_font_lower.find("cmsy") != std::string::npos) {
+        fallback_mapping = &get_oms_mapping();
+    } else if (base_font_lower.find("symbol") != std::string::npos) {
+        fallback_mapping = &get_symbol_mapping();
+    } else if (base_font_lower.find("zapfdingbats") != std::string::npos || base_font_lower.find("dingbats") != std::string::npos) {
+        fallback_mapping = &get_zapf_dingbats_mapping();
+    }
+
+    if (fallback_mapping) {
+        for (int i = 0; i <= 255; ++i) {
+            if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] == 0xFFFD) {
+                auto it_fallback = fallback_mapping->find(i);
+                if (it_fallback != fallback_mapping->end()) {
+                    cmap[i] = {it_fallback->second};
+                }
+            }
+        }
     }
 
     bool is_utf16_encoding = (encoding_name.find("UTF16") != std::string::npos || encoding_name.find("UCS2") != std::string::npos);
