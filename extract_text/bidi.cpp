@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Bidirectional text processing.
  *
  * Processes unicode text by arranging the characters into an order suitable
@@ -41,7 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static void bidi_warn(fz_context *ctx, const char *fmt, ...)
+static void bidi_warn(wz_context *ctx, const char *fmt, ...)
 {
 	(void)ctx;
 
@@ -176,9 +176,9 @@ static const uint8_t ucdn_to_bidi[] =
 #define class_from_ch_ws(ch) (ucdn_to_bidi[ucdn_get_bidi_class(ch)])
 
 /* Return a direction for white-space on the second pass of the algorithm. */
-static fz_bidi_chartype class_from_ch_n(uint32_t ch)
+static wz_bidi_chartype class_from_ch_n(uint32_t ch)
 {
-	fz_bidi_chartype from_ch_ws = class_from_ch_ws(ch);
+	wz_bidi_chartype from_ch_ws = class_from_ch_ws(ch);
 	if (from_ch_ws == BDI_S || from_ch_ws == BDI_WS)
 		return BDI_N;
 	return from_ch_ws;
@@ -457,7 +457,7 @@ split_at_script(const uint32_t *fragment,
 		size_t fragment_len,
 		int level,
 		void *arg,
-		fz_bidi_fragment_fn *callback)
+		wz_bidi_fragment_fn *callback)
 {
 	int script_guess = UCDN_SCRIPT_COMMON;
 	int script = UCDN_SCRIPT_COMMON;
@@ -508,13 +508,13 @@ split_at_script(const uint32_t *fragment,
  */
 static void
 classify_characters(const uint32_t *text,
-		fz_bidi_chartype *types,
+		wz_bidi_chartype *types,
 		size_t len,
-		fz_bidi_flags flags)
+		wz_bidi_flags flags)
 {
 	size_t i;
 
-	if ((flags & FZ_BIDI_CLASSIFY_WHITE_SPACE)!=0)
+	if ((flags & WZ_BIDI_CLASSIFY_WHITE_SPACE)!=0)
 	{
 		for (i = 0; i < len; i++)
 		{
@@ -554,7 +554,7 @@ classify_characters(const uint32_t *text,
  * Implements rule P2 of the Unicode Bidi Algorithm.
  * Note: Ignores explicit embeddings
  */
-static fz_bidi_level base_level_from_text(fz_bidi_chartype *types, size_t len)
+static wz_bidi_level base_level_from_text(wz_bidi_chartype *types, size_t len)
 {
 	size_t i;
 
@@ -564,37 +564,37 @@ static fz_bidi_level base_level_from_text(fz_bidi_chartype *types, size_t len)
 		{
 		/* strong left */
 		case BDI_L:
-			return FZ_BIDI_LTR;
+			return WZ_BIDI_LTR;
 
 		/* strong right */
 		case BDI_R:
 		case BDI_AL:
-			return FZ_BIDI_RTL;
+			return WZ_BIDI_RTL;
 		}
 	}
-	return FZ_BIDI_LTR;
+	return WZ_BIDI_LTR;
 }
 
-static fz_bidi_direction direction_from_type(fz_bidi_chartype type)
+static wz_bidi_direction direction_from_type(wz_bidi_chartype type)
 {
 	switch (type)
 	{
 	case BDI_L:
 	case BDI_EN:
-		return FZ_BIDI_LTR;
+		return WZ_BIDI_LTR;
 
 	case BDI_R:
 	case BDI_AL:
-		return FZ_BIDI_RTL;
+		return WZ_BIDI_RTL;
 
 	default:
-		return FZ_BIDI_NEUTRAL;
+		return WZ_BIDI_NEUTRAL;
 	}
 }
 
 static void
 classify_quoted_blocks(const uint32_t *text,
-		fz_bidi_chartype *types,
+		wz_bidi_chartype *types,
 		size_t len)
 {
 	size_t i;
@@ -610,11 +610,11 @@ classify_quoted_blocks(const uint32_t *text,
 	{
 		switch (direction_from_type(types[i]))
 		{
-		case FZ_BIDI_LTR:
+		case WZ_BIDI_LTR:
 			ltrFound = TRUE;
 			break;
 
-		case FZ_BIDI_RTL:
+		case WZ_BIDI_RTL:
 			rtlFound = TRUE;
 			break;
 
@@ -696,48 +696,48 @@ classify_quoted_blocks(const uint32_t *text,
  * given text. Also determines the base level and returns it in
  * *baseDir if *baseDir does not initially contain a valid direction.
  */
-static fz_bidi_level *
-create_levels(fz_context *ctx,
+static wz_bidi_level *
+create_levels(wz_context *ctx,
 		const uint32_t *text,
 		size_t len,
-		fz_bidi_direction *baseDir,
+		wz_bidi_direction *baseDir,
 		int resolveWhiteSpace,
 		int flags)
 {
-	fz_bidi_level *levels;
-	fz_bidi_level *plevels;
-	fz_bidi_chartype *types;
-	fz_bidi_chartype *ptypes;
-	fz_bidi_level baseLevel;
+	wz_bidi_level *levels;
+	wz_bidi_level *plevels;
+	wz_bidi_chartype *types;
+	wz_bidi_chartype *ptypes;
+	wz_bidi_level baseLevel;
 	const uint32_t *ptext;
 	size_t plen, remaining;
 
-	levels = static_cast<fz_bidi_level *>(malloc(len * sizeof(*levels)));
+	levels = static_cast<wz_bidi_level *>(malloc(len * sizeof(*levels)));
 	if (levels == NULL)
 	{
 		return NULL;
 	}
 
-	types = static_cast<fz_bidi_chartype *>(malloc(len * sizeof(*types)));
+	types = static_cast<wz_bidi_chartype *>(malloc(len * sizeof(*types)));
 	if (types == NULL)
 	{
 		free(levels);
 		return NULL;
 	}
 
-	classify_characters(text, types, len, static_cast<fz_bidi_flags>(flags));
+	classify_characters(text, types, len, static_cast<wz_bidi_flags>(flags));
 
-	if (*baseDir != FZ_BIDI_LTR && *baseDir != FZ_BIDI_RTL)
+	if (*baseDir != WZ_BIDI_LTR && *baseDir != WZ_BIDI_RTL)
 	{
 		/* Derive the base level from the text and
 		 * update *baseDir in case the caller wants to know.
 		 */
 		baseLevel = base_level_from_text(types, len);
-		*baseDir = ODD(baseLevel)==1 ? FZ_BIDI_RTL : FZ_BIDI_LTR;
+		*baseDir = ODD(baseLevel)==1 ? WZ_BIDI_RTL : WZ_BIDI_LTR;
 	}
 	else
 	{
-		baseLevel = static_cast<fz_bidi_level>(*baseDir);
+		baseLevel = static_cast<wz_bidi_level>(*baseDir);
 	}
 
 	{
@@ -752,7 +752,7 @@ create_levels(fz_context *ctx,
 		{
 			if (text[i]=='\t')
 			{
-				types[i] = (*baseDir == FZ_BIDI_RTL) ? BDI_R : BDI_L;
+				types[i] = (*baseDir == WZ_BIDI_RTL) ? BDI_R : BDI_L;
 			}
 		}
 	}
@@ -769,20 +769,20 @@ create_levels(fz_context *ctx,
 	remaining = len;
 	while (remaining)
 	{
-		plen = fz_bidi_resolve_paragraphs(ptypes, remaining);
+		plen = wz_bidi_resolve_paragraphs(ptypes, remaining);
 
 		/* Work out the levels and character types... */
-		(void)fz_bidi_resolve_explicit(baseLevel, BDI_N, ptypes, plevels, plen, 0);
-		fz_bidi_resolve_weak(ctx, baseLevel, ptypes, plevels, plen);
-		fz_bidi_resolve_neutrals(baseLevel, ptypes, plevels, plen);
-		fz_bidi_resolve_implicit(ptypes, plevels, plen);
+		(void)wz_bidi_resolve_explicit(baseLevel, BDI_N, ptypes, plevels, plen, 0);
+		wz_bidi_resolve_weak(ctx, baseLevel, ptypes, plevels, plen);
+		wz_bidi_resolve_neutrals(baseLevel, ptypes, plevels, plen);
+		wz_bidi_resolve_implicit(ptypes, plevels, plen);
 
-		classify_characters(ptext, ptypes, plen, FZ_BIDI_CLASSIFY_WHITE_SPACE);
+		classify_characters(ptext, ptypes, plen, WZ_BIDI_CLASSIFY_WHITE_SPACE);
 
 		if (resolveWhiteSpace)
 		{
 			/* resolve whitespace */
-			fz_bidi_resolve_whitespace(baseLevel, ptypes, plevels, plen);
+			wz_bidi_resolve_whitespace(baseLevel, ptypes, plevels, plen);
 		}
 
 		plevels += plen;
@@ -813,22 +813,22 @@ create_levels(fz_context *ctx,
 /* Partitions the given character sequence into one or more unidirectional
  * fragments and invokes the given callback function for each fragment.
  */
-void fz_bidi_fragment_text(fz_context *ctx,
+void wz_bidi_fragment_text(wz_context *ctx,
 		const uint32_t *text,
 		size_t textlen,
-		fz_bidi_direction *baseDir,
-		fz_bidi_fragment_fn *callback,
+		wz_bidi_direction *baseDir,
+		wz_bidi_fragment_fn *callback,
 		void *arg,
 		int flags)
 {
 	size_t startOfFragment;
 	size_t i;
-	fz_bidi_level *levels;
+	wz_bidi_level *levels;
 
 	if (text == NULL || callback == NULL || textlen == 0)
 		return;
 
-	DBUGH((ctx, "fz_bidi_fragment_text('%S', len = %d)\n", text, textlen));
+	DBUGH((ctx, "wz_bidi_fragment_text('%S', len = %d)\n", text, textlen));
 
 	levels = create_levels(ctx, text, textlen, baseDir, FALSE, flags);
 	if (levels == NULL)
@@ -866,3 +866,4 @@ void fz_bidi_fragment_text(fz_context *ctx,
 
 	free(levels);
 }
+

@@ -1,4 +1,4 @@
-// redactor.cpp
+﻿// redactor.cpp
 // Core redaction logic adapted for WinnerZ architecture
 // Independent implementation without external dependencies
 // Native WinnerZ pipeline: WinPdfDocument + WinPdfInterpreter.
@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-// ─── WinnerZ pipeline headers ───────────────────────────────────────────────
+// â”€â”€â”€ WinnerZ pipeline headers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #include "../extract_text/pdf_engine.hpp"
 #include "../extract_text/extractor_logic.hpp"
 #include "../extract_text/decoder_inflate.hpp"
@@ -43,7 +43,7 @@ struct WinRedactZone {
     Rect rect;   // PDF coordinates (bottom-left origin)
 };
 
-// ─── Geometry helpers ────────────────────────────────────────────────────────
+// â”€â”€â”€ Geometry helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static bool rects_are_valid_and_intersect(const Rect& a, const Rect& b) {
     // Check if bounding boxes intersect and form a valid rectangle
@@ -183,8 +183,8 @@ static void mat_mul(const float a[6], const float b[6], float out[6]) {
 //
 // 1. Compute local TRM
 // 2. Transform bounding box to device space
-//    1. trm_local  = Tfs × Th × Tm  (text space, pre-CTM)
-//    2. ctm        = pending.ctm ⊕ sent.ctm ⊕ page_transform
+//    1. trm_local  = Tfs Ă— Th Ă— Tm  (text space, pre-CTM)
+//    2. ctm        = pending.ctm â• sent.ctm â• page_transform
 //    3. bbox       = fontspace bbox (uses ascender/descender from font metrics)
 //    4. Call text_filter(trm_local, ctm, bbox_fontspace)
 //    5. Inside text_filter: trm_device = concat(trm_local, ctm)
@@ -208,7 +208,7 @@ static void compute_trm_local(const TextState& st, float trm_local[6]) {
     trm_local[5] = rise * st.tm[3] + st.tm[5];
 }
 
-// Step 2: Compute font space bbox — using ascender/descender from font metrics.
+// Step 2: Compute font space bbox â€” using ascender/descender from font metrics.
 // Core redaction logic
 //   WMode 0: bbox = { x0=0, y0=descender, x1=adv, y1=ascender }
 //   WMode 1: bbox = { x0=font_bbox_x0, y0=0, x1=font_bbox_x1, y1=adv_vert }
@@ -216,10 +216,10 @@ static void compute_trm_local(const TextState& st, float trm_local[6]) {
 static Rect compute_bbox_fontspace(float adv, float ascender, float descender,
                                     float font_bbox_x0, float font_bbox_x1, int wmode) {
     if (wmode == 0) {
-        // Clone line 700–703: bbox = [0, descender, adv, ascender]
+        // Clone line 700â€“703: bbox = [0, descender, adv, ascender]
         return { 0.0f, descender, adv, ascender };
     } else {
-        // Clone line 707–711: bbox = [font_bbox.x0, 0, font_bbox.x1, adv_vert]
+        // Clone line 707â€“711: bbox = [font_bbox.x0, 0, font_bbox.x1, adv_vert]
         return { font_bbox_x0, 0.0f, font_bbox_x1, adv };
     }
 }
@@ -267,7 +267,7 @@ static Rect compute_glyph_bbox_device(
     return transform_rect_by_matrix(bbox_fs, trm_device);
 }
 
-// ─── Minimal parse helpers for filtering stream ─────────────────────────────
+// â”€â”€â”€ Minimal parse helpers for filtering stream â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static bool is_whitespace(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
@@ -433,7 +433,7 @@ static double parse_number_token(const uint8_t* data, size_t& pos, size_t len) {
     return std::strtod(n.c_str(), nullptr);
 }
 
-// ─── Token types ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Token types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 enum class TokType { None, Op, Number, String, Name, Array, Dictionary };
 
@@ -743,7 +743,7 @@ static void move_text_position(TextState& st, float tx, float ty) {
 // Update tm after rendering 1 glyph with advance `adv`.
 // Advance the text matrix after rendering a character
 //   WMode 0: tx = (Tfs*adv + Tc) * Th;  ty = 0
-//   WMode 1: tx = 0;  ty = -(Tfs*adv + Tc)  ← negative because text goes down
+//   WMode 1: tx = 0;  ty = -(Tfs*adv + Tc)  â† negative because text goes down
 static void advance_text_matrix(TextState& st, float adv,
                                  float char_spacing_adj = 0.0f) {
     float h = st.h_scale / 100.0f;
@@ -827,7 +827,7 @@ static std::vector<TjSegment> filter_show_string(
 
     size_t i = 0;
     while (i < input_bytes.size()) {
-        // ── Step 1: Read code according to codespace ──
+        // â”€â”€ Step 1: Read code according to codespace â”€â”€
         int code = (int)input_bytes[i];
         int consumed = 1;
         {
@@ -856,12 +856,12 @@ static std::vector<TjSegment> filter_show_string(
 
         float adv = get_glyph_advance(width_map, st.font_name, code);
 
-        // ── Step 2: Compute device-space bbox and decide ──
+        // â”€â”€ Step 2: Compute device-space bbox and decide â”€â”€
         Rect char_bbox = compute_glyph_bbox_device(
             st, ctm, adv, asc, dsc, font_bbox_x0, font_bbox_x1);
         bool remove = should_remove_glyph(char_bbox, zones);
 
-        // ── Step 3: process result ──
+        // â”€â”€ Step 3: process result â”€â”€
         if (!remove) {
             // Keep character: if Tm_adjust is pending, emit it first
             if (Tm_adjust != 0.0f) {
@@ -924,7 +924,7 @@ static std::vector<TjSegment> filter_show_string(
                 // Simplified spacing emission
                 // This Tm_adjust will be emitted constructed as (adj.number = Tm_adjust*1000)
                 // Compute skipped distance for kerning
-                //       Tm_adjust += skip_dist / Tfs  (adjust_text rồi chia Tfs nữa)
+                //       Tm_adjust += skip_dist / Tfs  (adjust_text rá»“i chia Tfs ná»¯a)
                 // Accumulate kerning adjustments to compensate for removed characters
                 // and char_tx = (w0 + Tc + Tw) * Tfs * Th   (per PDF spec)
                 // skip_dist = -char_tx / scale = -(w0 + Tc + Tw) * Tfs  (since scale = Th)
@@ -938,7 +938,7 @@ static std::vector<TjSegment> filter_show_string(
             }
         }
 
-        // ── Step 4: Advance text matrix (whether removed or kept) ──
+        // â”€â”€ Step 4: Advance text matrix (whether removed or kept) â”€â”€
         // Advance the text matrix after rendering a character
         {
             bool is_space = (consumed == 1 && code == 0x20) ||
@@ -1024,7 +1024,7 @@ static void emit_token(WinRedactWriter& out, const Token& tok) {
 }
 
 // ============================================================
-//  run_filter — forward declaration (needed for recursive XObject calls)
+//  run_filter â€” forward declaration (needed for recursive XObject calls)
 // ============================================================
 static std::string run_filter(
     const std::vector<uint8_t>& stream,
@@ -1094,11 +1094,11 @@ static std::string run_filter(
             continue;
         }
 
-        // ── Process operator ────────────────────────────────────────────
+        // â”€â”€ Process operator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         const std::string& op = tok.op;
 
-        // BI ... ID ... EI — treat inline-image bytes as opaque payload.
+        // BI ... ID ... EI â€” treat inline-image bytes as opaque payload.
         if (op == "BI") {
             size_t inline_end = skip_inline_image_payload(stream.data(), pos, len);
             if (inline_end > token_start && inline_end <= len) {
@@ -1109,7 +1109,7 @@ static std::string run_filter(
             continue;
         }
 
-        // BT — Begin Text (clone: in_text = true, reset TM/TLM)
+        // BT â€” Begin Text (clone: in_text = true, reset TM/TLM)
         if (op == "BT") {
             in_text = true;
             std::fill(st.tm,  st.tm  + 6, 0.0f); st.tm[0]  = 1; st.tm[3]  = 1;
@@ -1117,7 +1117,7 @@ static std::string run_filter(
             out.write("BT");
         }
 
-        // ET — End Text
+        // ET â€” End Text
         else if (op == "ET") {
             in_text = false;
             out.write("ET");
@@ -1176,7 +1176,7 @@ static std::string run_filter(
             out.emit_op("cm");
         }
 
-        // Tf — Set Font (clone: update font name and size in TextState)
+        // Tf â€” Set Font (clone: update font name and size in TextState)
         else if (op == "Tf") {
             if (operands.size() >= 2) {
                 // /FontName size Tf
@@ -1199,7 +1199,7 @@ static std::string run_filter(
             }
         }
 
-        // Tm — Set Text Matrix (clone: update tm and tlm)
+        // Tm â€” Set Text Matrix (clone: update tm and tlm)
         else if (op == "Tm") {
             if (operands.size() >= 6) {
                 bool ok = true;
@@ -1221,7 +1221,7 @@ static std::string run_filter(
             out.emit_op("Tm");
         }
 
-        // Td — Move text position (clone: move_text_position)
+        // Td â€” Move text position (clone: move_text_position)
         else if (op == "Td") {
             if (operands.size() >= 2) {
                 const Token& tx = operands[operands.size()-2];
@@ -1235,7 +1235,7 @@ static std::string run_filter(
             out.emit_op("Td");
         }
 
-        // TD — Move text position + set leading (clone: leading = -ty, then Td)
+        // TD â€” Move text position + set leading (clone: leading = -ty, then Td)
         else if (op == "TD") {
             if (operands.size() >= 2) {
                 const Token& tx = operands[operands.size()-2];
@@ -1251,13 +1251,13 @@ static std::string run_filter(
             out.emit_op("TD");
         }
 
-        // T* — New line (clone: use leading)
+        // T* â€” New line (clone: use leading)
         else if (op == "T*") {
             move_text_position(st, 0.0f, -st.leading);
             out.write("T*");
         }
 
-        // TL — Set leading
+        // TL â€” Set leading
         else if (op == "TL") {
             if (!operands.empty() && operands.back().type == TokType::Number)
                 st.leading = (float)operands.back().number;
@@ -1267,7 +1267,7 @@ static std::string run_filter(
             out.emit_op("TL");
         }
 
-        // Tc — char spacing
+        // Tc â€” char spacing
         else if (op == "Tc") {
             if (!operands.empty() && operands.back().type == TokType::Number)
                 st.char_spacing = (float)operands.back().number;
@@ -1277,7 +1277,7 @@ static std::string run_filter(
             out.emit_op("Tc");
         }
 
-        // Tw — word spacing
+        // Tw â€” word spacing
         else if (op == "Tw") {
             if (!operands.empty() && operands.back().type == TokType::Number)
                 st.word_spacing = (float)operands.back().number;
@@ -1287,7 +1287,7 @@ static std::string run_filter(
             out.emit_op("Tw");
         }
 
-        // Tz — h_scale
+        // Tz â€” h_scale
         else if (op == "Tz") {
             if (!operands.empty() && operands.back().type == TokType::Number)
                 st.h_scale = (float)operands.back().number;
@@ -1297,7 +1297,7 @@ static std::string run_filter(
             out.emit_op("Tz");
         }
 
-        // Ts — text rise
+        // Ts â€” text rise
         else if (op == "Ts") {
             if (!operands.empty() && operands.back().type == TokType::Number)
                 st.text_rise = (float)operands.back().number;
@@ -1307,7 +1307,7 @@ static std::string run_filter(
             out.emit_op("Ts");
         }
 
-        // Tj — Show string
+        // Tj â€” Show string
         // Accumulate kerning adjustments to compensate for removed characters
         // Output: [<bytes1> kerning1 <bytes2> kerning2 ...] TJ
         // Accumulate kerning adjustments to compensate for removed characters
@@ -1338,7 +1338,7 @@ static std::string run_filter(
             }
         }
 
-        // TJ — Show strings with kerning
+        // TJ â€” Show strings with kerning
         // Filter text string and emit surviving segments
         // kerning numbers remain unchanged and update tm, they must also be adjust_text.
         else if (op == "TJ") {
@@ -1466,11 +1466,11 @@ static std::string run_filter(
             }
         }
 
-        // ── Do — XObject (Image hoặc Form) ──────────────────────────────────
+        // â”€â”€ Do â€” XObject (Image hoáº·c Form) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Process Form XObjects recursively
-        //   Nếu là Form XObject: tính baked_ctm = xobj_matrix * current_ctm
-        //   Rồi đệ quy run_filter trên stream của XObject với baked_ctm
-        //   Inline kết quả lọc vào stream cha dưới dạng: q [matrix] cm <content> Q
+        //   Náº¿u lĂ  Form XObject: tĂ­nh baked_ctm = xobj_matrix * current_ctm
+        //   Rá»“i Ä‘á»‡ quy run_filter trĂªn stream cá»§a XObject vá»›i baked_ctm
+        //   Inline káº¿t quáº£ lá»c vĂ o stream cha dÆ°á»›i dáº¡ng: q [matrix] cm <content> Q
         else if (op == "Do") {
             std::string xobj_name;
             if (!operands.empty() && operands.back().type == TokType::Name)
@@ -1571,7 +1571,7 @@ static std::string run_filter(
 }
 
 // ============================================================
-//  Public API — RedactionEngine (fully replaces old redactor.cpp)
+//  Public API â€” RedactionEngine (fully replaces old redactor.cpp)
 // ============================================================
 
 // Caller input coordinates: top-down (y increases downwards)
@@ -1585,7 +1585,7 @@ static Rect convert_topdown_to_pdf(const Rect& top_down, const Rect& mediabox) {
     };
 }
 
-static bool fz_invert_matrix(float inv[6], const float m[6]) {
+static bool wz_invert_matrix(float inv[6], const float m[6]) {
     float det = m[0] * m[3] - m[1] * m[2];
     if (det == 0.0f) return false;
     float rdet = 1.0f / det;
@@ -1598,14 +1598,14 @@ static bool fz_invert_matrix(float inv[6], const float m[6]) {
     return true;
 }
 
-// ─── Main public function ────────────────────────────────────────────────────
+// â”€â”€â”€ Main public function â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Redact text in a page, returning filtered content stream as bytes.
 // Caller must overwrite the PDF file by updating /Contents stream.
 //
 // page_idx: page index (0-based)
 // redact_zones_topdown: list of zones to remove, top-down coordinates
-// ctm: Current Transformation Matrix của trang (thường là identity for first-pass)
+// ctm: Current Transformation Matrix cá»§a trang (thÆ°á»ng lĂ  identity for first-pass)
 // 
 // Parse and filter the content stream to remove redacted text
 std::vector<uint8_t> WinnerZ_RedactPage(
@@ -1621,7 +1621,7 @@ std::vector<uint8_t> WinnerZ_RedactPage(
     bool has_inv = false;
     float inv[6];
     if (page_ctm) {
-        has_inv = fz_invert_matrix(inv, page_ctm);
+        has_inv = wz_invert_matrix(inv, page_ctm);
     }
     
     // Convert coordinates (top-down to PDF)
@@ -1665,3 +1665,4 @@ std::vector<uint8_t> WinnerZ_RedactPage(
 }
 
 } // namespace winnerz
+

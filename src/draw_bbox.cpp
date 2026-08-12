@@ -1,4 +1,4 @@
-#include <cstring>
+﻿#include <cstring>
 #include <cmath>
 #include <algorithm>
 
@@ -6,7 +6,7 @@
 // CORE STRUCTURES - Simplified
 // ============================================================================
 
-struct fz_irect {
+struct wz_irect {
     int x0, y0, x1, y1;
     
     bool is_empty() const {
@@ -18,11 +18,11 @@ struct fz_irect {
     }
 };
 
-struct fz_matrix {
+struct wz_matrix {
     float a, b, c, d, e, f;
 };
 
-struct fz_pixmap {
+struct wz_pixmap {
     int x, y;      // position
     int w, h;      // dimensions
     int n;         // components
@@ -32,20 +32,20 @@ struct fz_pixmap {
     void *colorspace;
     void *seps;
     
-    fz_irect bbox() const {
+    wz_irect bbox() const {
         return {x, y, x + w, y + h};
     }
 };
 
-struct fz_draw_state {
-    fz_irect scissor;      // Clipping rectangle (bbox)
-    fz_pixmap *dest;
-    fz_pixmap *mask;
-    fz_pixmap *shape;
-    fz_pixmap *group_alpha;
+struct wz_draw_state {
+    wz_irect scissor;      // Clipping rectangle (bbox)
+    wz_pixmap *dest;
+    wz_pixmap *mask;
+    wz_pixmap *shape;
+    wz_pixmap *group_alpha;
     int blendmode;
     float alpha;
-    fz_matrix ctm;
+    wz_matrix ctm;
     int flags;
 };
 
@@ -53,9 +53,9 @@ struct fz_draw_state {
 // RECTANGLE INTERSECTION - Core logic for bbox clipping
 // ============================================================================
 
-fz_irect fz_intersect_irect(const fz_irect &a, const fz_irect &b)
+wz_irect wz_intersect_irect(const wz_irect &a, const wz_irect &b)
 {
-    fz_irect result;
+    wz_irect result;
     result.x0 = std::max(a.x0, b.x0);
     result.y0 = std::max(a.y0, b.y0);
     result.x1 = std::min(a.x1, b.x1);
@@ -63,7 +63,7 @@ fz_irect fz_intersect_irect(const fz_irect &a, const fz_irect &b)
     return result;
 }
 
-fz_irect fz_pixmap_bbox(const fz_pixmap *pix)
+wz_irect wz_pixmap_bbox(const wz_pixmap *pix)
 {
     if (!pix) return {0, 0, 0, 0};
     return pix->bbox();
@@ -77,14 +77,14 @@ class DrawDevice {
 private:
     static constexpr int STACK_SIZE = 96;
     
-    fz_matrix transform;
+    wz_matrix transform;
     int top;
-    fz_draw_state *stack;
+    wz_draw_state *stack;
     int stack_cap;
-    fz_draw_state init_stack[STACK_SIZE];
+    wz_draw_state init_stack[STACK_SIZE];
     
 public:
-    DrawDevice(const fz_matrix &transform, fz_pixmap *dest, const fz_irect *clip) 
+    DrawDevice(const wz_matrix &transform, wz_pixmap *dest, const wz_irect *clip) 
         : transform(transform), top(0), stack_cap(STACK_SIZE)
     {
         stack = &init_stack[0];
@@ -109,10 +109,10 @@ public:
     }
     
     // Apply bbox clipping to current scissor
-    void apply_clip_bbox(const fz_irect *clip) {
+    void apply_clip_bbox(const wz_irect *clip) {
         if (!clip) return;
         
-        fz_draw_state *state = &stack[top];
+        wz_draw_state *state = &stack[top];
         
         if (clip->x0 > state->scissor.x0)
             state->scissor.x0 = clip->x0;
@@ -125,25 +125,25 @@ public:
     }
     
     // Get current clipping bbox
-    fz_irect get_scissor() const {
+    wz_irect get_scissor() const {
         return stack[top].scissor;
     }
     
     // Check if point is inside current bbox
     bool is_point_visible(int x, int y) const {
-        const fz_irect &s = stack[top].scissor;
+        const wz_irect &s = stack[top].scissor;
         return x >= s.x0 && x < s.x1 && y >= s.y0 && y < s.y1;
     }
     
     // Check if rect intersects with current bbox
-    bool is_rect_visible(const fz_irect &rect) const {
-        fz_irect clipped = fz_intersect_irect(rect, stack[top].scissor);
+    bool is_rect_visible(const wz_irect &rect) const {
+        wz_irect clipped = wz_intersect_irect(rect, stack[top].scissor);
         return !clipped.is_empty();
     }
     
     // Get intersection of rect with current bbox
-    fz_irect clip_rect(const fz_irect &rect) const {
-        return fz_intersect_irect(rect, stack[top].scissor);
+    wz_irect clip_rect(const wz_irect &rect) const {
+        return wz_intersect_irect(rect, stack[top].scissor);
     }
 };
 
@@ -156,13 +156,13 @@ public:
     // Fill path with bbox clipping
     static bool fill_path_with_bbox(
         DrawDevice &dev,
-        const fz_irect &path_bbox)
+        const wz_irect &path_bbox)
     {
         // Get current scissor (clipping bbox)
-        fz_irect scissor = dev.get_scissor();
+        wz_irect scissor = dev.get_scissor();
         
         // Intersect path bbox with scissor
-        fz_irect clipped = fz_intersect_irect(path_bbox, scissor);
+        wz_irect clipped = wz_intersect_irect(path_bbox, scissor);
         
         // If empty, skip drawing
         if (clipped.is_empty()) {
@@ -176,10 +176,10 @@ public:
     // Stroke path with bbox clipping
     static bool stroke_path_with_bbox(
         DrawDevice &dev,
-        const fz_irect &path_bbox)
+        const wz_irect &path_bbox)
     {
-        fz_irect scissor = dev.get_scissor();
-        fz_irect clipped = fz_intersect_irect(path_bbox, scissor);
+        wz_irect scissor = dev.get_scissor();
+        wz_irect clipped = wz_intersect_irect(path_bbox, scissor);
         
         if (clipped.is_empty()) {
             return false;
@@ -191,21 +191,21 @@ public:
     // Fill image with bbox clipping
     static bool fill_image_with_bbox(
         DrawDevice &dev,
-        const fz_pixmap *image,
-        const fz_irect &image_bbox)
+        const wz_pixmap *image,
+        const wz_irect &image_bbox)
     {
-        fz_irect dest_bbox = fz_pixmap_bbox(dev.get_current_dest());
-        fz_irect scissor = dev.get_scissor();
+        wz_irect dest_bbox = wz_pixmap_bbox(dev.get_current_dest());
+        wz_irect scissor = dev.get_scissor();
         
         // Clip to destination and scissor
-        fz_irect clip = fz_intersect_irect(dest_bbox, scissor);
+        wz_irect clip = wz_intersect_irect(dest_bbox, scissor);
         
         if (image->w == 0 || image->h == 0 || clip.is_empty()) {
             return false;
         }
         
         // Further clip to image bounds
-        fz_irect final_clip = fz_intersect_irect(image_bbox, clip);
+        wz_irect final_clip = wz_intersect_irect(image_bbox, clip);
         
         if (final_clip.is_empty()) {
             return false;
@@ -215,18 +215,18 @@ public:
     }
     
 private:
-    static bool draw_within_bbox(const fz_irect &bbox) {
+    static bool draw_within_bbox(const wz_irect &bbox) {
         // Actual drawing implementation
         // This is where you'd rasterize/render within the bbox
         return true;
     }
     
-    static bool draw_image_within_bbox(const fz_pixmap *image, const fz_irect &bbox) {
+    static bool draw_image_within_bbox(const wz_pixmap *image, const wz_irect &bbox) {
         // Actual image drawing implementation
         return true;
     }
     
-    static fz_pixmap* get_current_dest();
+    static wz_pixmap* get_current_dest();
 };
 
 // ============================================================================
@@ -241,14 +241,14 @@ public:
     ClipStack(DrawDevice &d) : dev(d) {}
     
     // Push new clipping bbox onto stack
-    void push_clip(const fz_irect &clip_bbox) {
+    void push_clip(const wz_irect &clip_bbox) {
         // In real implementation, this would:
         // 1. Push new state onto stack
         // 2. Intersect new bbox with current scissor
         // 3. Create mask pixmap if needed
         
-        fz_irect current = dev.get_scissor();
-        fz_irect new_scissor = fz_intersect_irect(current, clip_bbox);
+        wz_irect current = dev.get_scissor();
+        wz_irect new_scissor = wz_intersect_irect(current, clip_bbox);
         
         // Update scissor for new level
         // (simplified - real code manages full state stack)
@@ -267,7 +267,7 @@ public:
 
 void example_draw_with_bbox() {
     // Create destination pixmap
-    fz_pixmap dest;
+    wz_pixmap dest;
     dest.x = 0;
     dest.y = 0;
     dest.w = 800;
@@ -278,16 +278,16 @@ void example_draw_with_bbox() {
     dest.samples = new unsigned char[dest.stride * dest.h];
     
     // Define bbox to draw within (e.g., page rect or specific region)
-    fz_irect draw_bbox = {100, 100, 500, 400};
+    wz_irect draw_bbox = {100, 100, 500, 400};
     
     // Create draw device with bbox clipping
-    fz_matrix identity = {1, 0, 0, 1, 0, 0};
+    wz_matrix identity = {1, 0, 0, 1, 0, 0};
     DrawDevice device(identity, &dest, &draw_bbox);
     
     // Now all drawing operations will be clipped to bbox [100,100,500,400]
     
     // Example: Draw a path
-    fz_irect path_bbox = {50, 50, 600, 600};  // Larger than clip
+    wz_irect path_bbox = {50, 50, 600, 600};  // Larger than clip
     bool drawn = DrawOperations::fill_path_with_bbox(device, path_bbox);
     // Only region [100,100,500,400] will be affected
     
@@ -297,3 +297,4 @@ void example_draw_with_bbox() {
     
     delete[] dest.samples;
 }
+

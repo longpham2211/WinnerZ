@@ -1,4 +1,4 @@
-// winnerz_wasm_embind.cpp
+﻿// winnerz_wasm_embind.cpp
 #ifdef __EMSCRIPTEN__
 
 #include <algorithm>
@@ -41,9 +41,9 @@ using namespace emscripten;
 
 namespace {
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Memory & Byte Transfer Helpers (CRITICAL FOR WASM)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 static std::vector<uint8_t> ValToVec(const emscripten::val& v) {
     if (v.isUndefined() || v.isNull()) return {};
     unsigned int l = v["byteLength"].as<unsigned int>();
@@ -60,17 +60,15 @@ static emscripten::val VecToVal(const std::vector<uint8_t>& v) {
     ).call<emscripten::val>("slice"); 
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Math & Core Logic (100% matched with Python)
-// ─────────────────────────────────────────────────────────────────────────────
-struct fz_matrix { float a, b, c, d, e, f; };
 
-static fz_matrix fz_scale(float sx, float sy) { return {sx, 0, 0, sy, 0, 0}; }
+struct wz_matrix { float a, b, c, d, e, f; };
 
-static fz_matrix fz_pre_rotate(fz_matrix m, float degrees) {
+static wz_matrix wz_scale(float sx, float sy) { return {sx, 0, 0, sy, 0, 0}; }
+
+static wz_matrix wz_pre_rotate(wz_matrix m, float degrees) {
     float angle = degrees * 3.14159265358979323846f / 180.0f;
     float s = std::sin(angle), c = std::cos(angle);
-    fz_matrix r = {c, s, -s, c, 0, 0};
+    wz_matrix r = {c, s, -s, c, 0, 0};
     return {
         r.a * m.a + r.b * m.c, r.a * m.b + r.b * m.d,
         r.c * m.a + r.d * m.c, r.c * m.b + r.d * m.d,
@@ -78,9 +76,9 @@ static fz_matrix fz_pre_rotate(fz_matrix m, float degrees) {
     };
 }
 
-static fz_matrix fz_translate(float tx, float ty) { return {1, 0, 0, 1, tx, ty}; }
+static wz_matrix wz_translate(float tx, float ty) { return {1, 0, 0, 1, tx, ty}; }
 
-static fz_matrix fz_concat(fz_matrix left, fz_matrix right) {
+static wz_matrix wz_concat(wz_matrix left, wz_matrix right) {
     return {
         left.a * right.a + left.b * right.c, left.a * right.b + left.b * right.d,
         left.c * right.a + left.d * right.c, left.c * right.b + left.d * right.d,
@@ -89,7 +87,7 @@ static fz_matrix fz_concat(fz_matrix left, fz_matrix right) {
     };
 }
 
-static std::array<float, 4> fz_transform_rect(const std::array<float, 4>& r, fz_matrix m) {
+static std::array<float, 4> wz_transform_rect(const std::array<float, 4>& r, wz_matrix m) {
     float x0 = r[0], y0 = r[1], x1 = r[2], y1 = r[3];
     float t_x0 = x0 * m.a + y0 * m.c + m.e, t_y0 = x0 * m.b + y0 * m.d + m.f;
     float t_x1 = x1 * m.a + y0 * m.c + m.e, t_y1 = x1 * m.b + y0 * m.d + m.f;
@@ -101,11 +99,11 @@ static std::array<float, 4> fz_transform_rect(const std::array<float, 4>& r, fz_
     };
 }
 
-static std::array<float, 2> fz_transform_point(float x, float y, fz_matrix m) {
+static std::array<float, 2> wz_transform_point(float x, float y, wz_matrix m) {
     return {x * m.a + y * m.c + m.e, x * m.b + y * m.d + m.f};
 }
 
-static std::array<float, 4> fz_intersect_rect(const std::array<float, 4>& a, const std::array<float, 4>& b) {
+static std::array<float, 4> wz_intersect_rect(const std::array<float, 4>& a, const std::array<float, 4>& b) {
     float x0 = std::max(a[0], b[0]), y0 = std::max(a[1], b[1]);
     float x1 = std::min(a[2], b[2]), y1 = std::min(a[3], b[3]);
     if (x1 < x0 || y1 < y0) return {0, 0, 0, 0};
@@ -119,7 +117,7 @@ static std::array<float, 4> QuadToBBox(const WinExtract::Quad& q) {
     };
 }
 
-static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
+static wz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
     std::array<float, 4> mediabox = {geo.mediabox.x0, geo.mediabox.y0, geo.mediabox.x1, geo.mediabox.y1};
     std::array<float, 4> cropbox = {geo.cropbox.x0, geo.cropbox.y0, geo.cropbox.x1, geo.cropbox.y1};
     int rotate = geo.rotate;
@@ -128,12 +126,12 @@ static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
     rotate = 90 * ((rotate + 45) / 90);
     if (rotate >= 360) rotate = 0;
 
-    fz_matrix ctm = fz_scale(1.0f, -1.0f);
-    ctm = fz_pre_rotate(ctm, -static_cast<float>(rotate));
-    cropbox = fz_intersect_rect(cropbox, mediabox);
+    wz_matrix ctm = wz_scale(1.0f, -1.0f);
+    ctm = wz_pre_rotate(ctm, -static_cast<float>(rotate));
+    cropbox = wz_intersect_rect(cropbox, mediabox);
     if (cropbox[2] - cropbox[0] < 1 || cropbox[3] - cropbox[1] < 1) cropbox = {0, 0, 1, 1};
-    auto trans_cropbox = fz_transform_rect(cropbox, ctm);
-    return fz_concat(ctm, fz_translate(-trans_cropbox[0], -trans_cropbox[1]));
+    auto trans_cropbox = wz_transform_rect(cropbox, ctm);
+    return wz_concat(ctm, wz_translate(-trans_cropbox[0], -trans_cropbox[1]));
 }
 
 static std::string Utf8FromCodepoint(int cp) {
@@ -232,9 +230,9 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
 }
 
 static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, bool include_chars, bool sort_output) {
-    fz_matrix ctm = ComputePageCTM(extracted.geo);
+    wz_matrix ctm = ComputePageCTM(extracted.geo);
     std::array<float, 4> crop_arr = {extracted.geo.cropbox.x0, extracted.geo.cropbox.y0, extracted.geo.cropbox.x1, extracted.geo.cropbox.y1};
-    std::array<float, 4> page_bbox = fz_transform_rect(crop_arr, ctm);
+    std::array<float, 4> page_bbox = wz_transform_rect(crop_arr, ctm);
 
     float width = std::max(0.0f, page_bbox[2] - page_bbox[0]);
     float height = std::max(0.0f, page_bbox[3] - page_bbox[1]);
@@ -249,8 +247,8 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
     
     if (sort_output) {
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
-            auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-            auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+            auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
             if (ab[3] != bb[3]) return ab[3] < bb[3];
             if (ab[0] != bb[0]) return ab[0] < bb[0];
             return false;
@@ -262,17 +260,17 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
         const auto& block = *block_ptr;
         json block_dict;
         block_dict["type"] = (block.type == WinExtract::BlockType::TEXT) ? 0 : 1;
-        auto bb = fz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
+        auto bb = wz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
         block_dict["bbox"] = {bb[0], bb[1], bb[2], bb[3]};
 
         json lines_list = json::array();
         for (const auto& line : block.lines) {
             json line_dict;
-            auto lb = fz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
+            auto lb = wz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
             line_dict["bbox"] = {lb[0], lb[1], lb[2], lb[3]};
             line_dict["wmode"] = line.wmode;
-            auto td = fz_transform_point(line.dir.x, line.dir.y, ctm);
-            auto to = fz_transform_point(0, 0, ctm);
+            auto td = wz_transform_point(line.dir.x, line.dir.y, ctm);
+            auto to = wz_transform_point(0, 0, ctm);
             line_dict["dir"] = {td[0] - to[0], td[1] - to[1]};
 
             const auto spans = BuildLineSpans(line);
@@ -280,12 +278,12 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
             for (const auto& span : spans) {
                 json span_dict;
                 span_dict["text"] = SpanText(span);
-                auto sb = fz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
+                auto sb = wz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
                 span_dict["bbox"] = {sb[0], sb[1], sb[2], sb[3]};
                 
                 std::array<float, 2> origin;
-                if (!span.chars.empty()) origin = fz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
-                else origin = fz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
+                if (!span.chars.empty()) origin = wz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
+                else origin = wz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
                 span_dict["origin"] = {origin[0], origin[1]};
 
                 span_dict["font"] = span.font_name; span_dict["size"] = span.font_size;
@@ -302,9 +300,9 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
                         json ch_dict;
                         ch_dict["c"] = Utf8FromCodepoint(ch->c);
                         ch_dict["u"] = ch->c;
-                        auto co = fz_transform_point(ch->origin.x, ch->origin.y, ctm);
+                        auto co = wz_transform_point(ch->origin.x, ch->origin.y, ctm);
                         ch_dict["origin"] = {co[0], co[1]};
-                        auto cb2 = fz_transform_rect(QuadToBBox(ch->quad), ctm);
+                        auto cb2 = wz_transform_rect(QuadToBBox(ch->quad), ctm);
                         ch_dict["bbox"] = {cb2[0], cb2[1], cb2[2], cb2[3]};
                         ch_dict["bidi"] = ch->bidi; ch_dict["wmode"] = span.wmode; ch_dict["flags"] = SpanFlags(span);
                         chars_list.push_back(std::move(ch_dict));
@@ -325,14 +323,14 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
 
 static std::string ExtractTextPlain(const std::shared_ptr<WinExtract::WinPdfDocument>& doc, int page_index, bool sort_output) {
     const ExtractedPage ep = ExtractTextPage(doc, page_index, sort_output);
-    fz_matrix ctm = ComputePageCTM(ep.geo);
+    wz_matrix ctm = ComputePageCTM(ep.geo);
     std::vector<const WinExtract::WinBlock*> sorted_blocks;
     for (const auto& block : ep.page.blocks) sorted_blocks.push_back(&block);
     
     if (sort_output) {
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
-            auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-            auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+            auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
             if (ab[3] != bb[3]) return ab[3] < bb[3];
             if (ab[0] != bb[0]) return ab[0] < bb[0];
             return false;
@@ -354,9 +352,9 @@ static std::string ExtractTextPlain(const std::shared_ptr<WinExtract::WinPdfDocu
     return text_out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// WasmDocument - Lớp được Expose sang JS qua Embind
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// WasmDocument - Lá»›p Ä‘Æ°á»£c Expose sang JS qua Embind
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class WasmDocument {
 public:
     std::string path_;
@@ -377,8 +375,8 @@ public:
     std::string pageRect(int i) const {
         checkPage(i);
         const auto geo = doc_->get_page_geometry(i);
-        fz_matrix ctm = ComputePageCTM(geo);
-        auto cb = fz_transform_rect({geo.cropbox.x0, geo.cropbox.y0, geo.cropbox.x1, geo.cropbox.y1}, ctm);
+        wz_matrix ctm = ComputePageCTM(geo);
+        auto cb = wz_transform_rect({geo.cropbox.x0, geo.cropbox.y0, geo.cropbox.x1, geo.cropbox.y1}, ctm);
         float w = std::max(0.0f, cb[2] - cb[0]), h = std::max(0.0f, cb[3] - cb[1]);
         return json{0.0f, 0.0f, w, h}.dump();
     }
@@ -446,8 +444,8 @@ public:
                                         std::string base64_img = Winnerz::base64_encode(png_data.data(), png_data.size());
                                         json img_dict;
                                         img_dict["type"] = 1;
-                                        fz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
-                                        auto mapped_bbox = fz_transform_rect({left, bottom, right, top}, ctm);
+                                        wz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
+                                        auto mapped_bbox = wz_transform_rect({left, bottom, right, top}, ctm);
                                         img_dict["bbox"] = {mapped_bbox[0], mapped_bbox[1], mapped_bbox[2], mapped_bbox[3]};
                                         img_dict["width"] = width;
                                         img_dict["height"] = height;
@@ -487,13 +485,13 @@ public:
     std::string getBlocks(int i, bool sort = false) const {
         checkPage(i);
         const auto ep = ExtractTextPage(doc_, i, sort);
-        fz_matrix ctm = ComputePageCTM(ep.geo);
+        wz_matrix ctm = ComputePageCTM(ep.geo);
         std::vector<const WinExtract::WinBlock*> blks;
         for (const auto& b : ep.page.blocks) blks.push_back(&b);
         if (sort) {
             std::stable_sort(blks.begin(), blks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
-                auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-                auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+                auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+                auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
                 if (std::abs(ab[3] - bb[3]) > 0.01f) return ab[3] > bb[3];
                 if (std::abs(ab[0] - bb[0]) > 0.01f) return ab[0] < bb[0];
                 return ab[1] > bb[1];
@@ -508,7 +506,7 @@ public:
                 for (const auto& sp : spans) for (const auto* ch : sp.chars) if (ch) AppendUtf8Codepoint(txt, ch->c);
                 txt += "\n";
             }
-            auto bb = fz_transform_rect({bp->bbox.x0, bp->bbox.y0, bp->bbox.x1, bp->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({bp->bbox.x0, bp->bbox.y0, bp->bbox.x1, bp->bbox.y1}, ctm);
             json bd;
             bd["bbox"] = {bb[0], bb[1], bb[2], bb[3]};
             bd["text"] = txt;
@@ -526,7 +524,7 @@ public:
         return dev.get_text(ep.page);
     }
 
-    // ĐƠN LUỒNG
+    // ÄÆ N LUá»’NG
     std::string getAllText() const {
         int n = doc_->count_pages();
         std::string final_res;
@@ -545,7 +543,7 @@ public:
         return out.dump();
     }
 
-    // ĐƠN LUỒNG
+    // ÄÆ N LUá»’NG
     std::string getAllDictsJson(bool include_chars = false, bool sort = false) const {
         int n = doc_->count_pages();
         std::string final_res = "[";
@@ -686,7 +684,7 @@ public:
 #endif
     }
 
-    // ĐƠN LUỒNG
+    // ÄÆ N LUá»’NG
     emscripten::val redactPagesBytes(const std::string& page_rects_json) const {
         json j;
         try { j = json::parse(page_rects_json); }
@@ -705,7 +703,7 @@ public:
                 zones.push_back(z);
             }
 
-            fz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
+            wz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
             float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
             std::map<int, std::vector<uint8_t>> page_updated_xobjects;
             const auto filtered = winnerz::WinnerZ_RedactPage(*doc_, page_index, zones, page_updated_xobjects, ctm_arr);
@@ -732,7 +730,7 @@ public:
             zones.push_back(z);
         }
 
-        fz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
+        wz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
         float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
         std::map<int, std::vector<uint8_t>> updated_xobjects;
         const auto filtered = winnerz::WinnerZ_RedactPage(*doc_, page_index, zones, updated_xobjects, ctm_arr);

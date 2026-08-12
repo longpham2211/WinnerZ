@@ -52,12 +52,18 @@ These functions automatically spawn C++ threads to utilize all CPU cores. They b
 These functions process a single page at a time but explicitly release the Python GIL (`py::gil_scoped_release`) during computation. **To achieve multi-threading, you must wrap them in Python's `concurrent.futures.ThreadPoolExecutor`.** This is the optimal architecture for extracting complex Python objects (like dicts) concurrently without lock contention.
 *   `page.get_text("dict")`: Extracts text along with precise spatial coordinates (bbox), fonts, and colors.
 *   `page.get_text("blocks")`, `page.get_text("rawdict")`
-*   `page.get_text_plain()`
+*   `page.get_text("text")`
 
 ### Group 3: Single-threaded (GIL Locked)
 These functions execute sequentially.
 *   `page.get_drawings()`
 *   `page.get_pixmap()`
+
+## Module-Level Functions
+
+*   `winnerz.open(path_or_bytes)`: The recommended global method to open a PDF. It utilizes an intelligent global caching mechanism to prevent redundant initializations and file I/O overhead.
+*   `winnerz.preload_fonts(fonts_dir)`: Pre-loads fonts into memory from a specified directory to accelerate bulk text-insertion tasks.
+*   `winnerz.measure_text_width(text, font_path, font_size, is_bold=False, is_italic=False)`: Uses HarfBuzz and FreeType in C++ to precisely measure the horizontal pixel width of a text string. Crucial for calculating word-wrap and alignments before insertion.
 
 ## Class Reference
 
@@ -77,8 +83,11 @@ Represents a PDF document instance. It manages the lifecycle of the underlying f
 *   `insert_text_fit_spacing_json(json_str, fonts_dir="", progress_cb=None)`: Native C++ parallel text insertion similar to `insert_text_json`, but with a highly specialized **Letter Spacing Compression (Bóp Dẹt Chữ)** engine. When text exceeds the bounding box width, it intelligently compresses the `Tm` horizontal matrix and glyph advance width without shrinking the font size. Perfect for translating documents where single-line spatial integrity is required without breaking into multiple lines.
 *   `insert_rects_json(json_str)`: Native C++ parallel rendering for colored rectangles (useful for background patching/redaction). Maps page indices to bounding boxes and RGB colors via JSON. Injects raw vector PDF streams (`re`, `f`) directly, bypassing slow PyMuPDF loops and Pillow image conversions. Highly recommended to pad bounding boxes by ~2 points to ensure full artifact coverage.
 *   `redact_pages_bytes(page_rects_map)`: (Native C++) Performs parallel Block Redaction across multiple pages and returns the cleaned PDF as `bytes` directly in RAM. Use with caution on very large files to avoid memory pressure.
+*   `redact_pages(output_path, page_rects_map)`: Performs parallel block redaction and saves directly to a file on disk.
+*   `redact_rects(output_path, page_index, rects)`: Applies block redaction to a single specific page and saves directly to disk.
 *   `get_page_font_basenames(page_index=0)`: Extracts the true BaseFont name (e.g., 'TimesNewRomanPS-BoldMT') from internal PDF resource identifiers (e.g., 'R14') by automatically stripping subset prefixes ('ABCDEF+'). Crucial for accurate font mapping and reconstruction.
-
+*   `clear_page_cache()`: Flushes the in-memory cache of previously processed pages. Highly recommended when iterating through thousands of pages to prevent RAM exhaustion.
+*   `save(path)`: Persists any changes made to the document (e.g., text insertions or overlays) directly to a file on disk.
 *   `close()`: Cleans up temporary resources, such as decrypted temporary files and in-memory editing buffers.
 
 ### Page
@@ -94,6 +103,8 @@ Represents a single page within a `Document`.
 *   `insert_image(rect, stream=None)`: Inserts an image (from bytes) into the specified rectangle. It handles internal PDF matrix transformations automatically.
 *   `show_pdf_page(rect, doc_src, page_idx, overlay=True, keep_proportion=True)`: Queues a complex overlay operation. It places a page from another document (`doc_src`) onto the current page, scaling it to fit `rect` while optionally keeping aspect ratio via `keep_proportion`. The actual merge is executed efficiently during `doc.save()`.
 *   `rect` (Property): Retrieves the bounding box of the page as a `Rect`.
+*   `parent` (Property): Returns the parent `Document` instance containing this page.
+*   `number` (Property): Retrieves the 1-based index (actual page number) of the page.
 
 ### Pixmap
 Represents an uncompressed image buffer containing pixel data.

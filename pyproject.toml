@@ -4,8 +4,8 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "winnerz"
-version = "1.2.18.14"
-description = "A robust Python wrapper for high-performance PDF rendering and text extraction using C++ core."
+version = "1.2.18.15"
+description = "High-performance PDF text extraction library."
 readme = "readme.md"
 authors = [
     { name = "Long Pham", email = "banhkha888@gmail.com" },

@@ -1,7 +1,7 @@
-
+﻿
 #define _notdef NULL
 
-const unsigned short fz_unicode_from_pdf_doc_encoding[256] =
+const unsigned short wz_unicode_from_pdf_doc_encoding[256] =
 {
 	/* 0x0 to 0x17 except \t, \n and \r are really undefined */
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -38,7 +38,7 @@ const unsigned short fz_unicode_from_pdf_doc_encoding[256] =
 	0x00f8, 0x00f9, 0x00fa, 0x00fb, 0x00fc, 0x00fd, 0x00fe, 0x00ff
 };
 
-const char *fz_glyph_name_from_adobe_standard[256] = {
+const char *wz_glyph_name_from_adobe_standard[256] = {
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
@@ -76,7 +76,7 @@ const char *fz_glyph_name_from_adobe_standard[256] = {
 	_notdef
 };
 
-const char *fz_glyph_name_from_mac_roman[256] = {
+const char *wz_glyph_name_from_mac_roman[256] = {
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
@@ -116,7 +116,7 @@ const char *fz_glyph_name_from_mac_roman[256] = {
 	"ring", "cedilla", "hungarumlaut", "ogonek", "caron"
 };
 
-const char *fz_glyph_name_from_mac_expert[256] = {
+const char *wz_glyph_name_from_mac_expert[256] = {
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
@@ -169,7 +169,7 @@ const char *fz_glyph_name_from_mac_expert[256] = {
 };
 
 /* All unused codes > 32 map to 'bullet' */
-const char *fz_glyph_name_from_win_ansi[256] = {
+const char *wz_glyph_name_from_win_ansi[256] = {
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
 	_notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef, _notdef,
@@ -210,7 +210,7 @@ const char *fz_glyph_name_from_win_ansi[256] = {
 	"yacute", "thorn", "ydieresis"
 };
 
-const unsigned short fz_unicode_from_iso8859_1[256] = {
+const unsigned short wz_unicode_from_iso8859_1[256] = {
 	0,
 	1,
 	2,
@@ -469,7 +469,7 @@ const unsigned short fz_unicode_from_iso8859_1[256] = {
 	255,
 };
 
-const char *fz_glyph_name_from_iso8859_1[256] = {
+const char *wz_glyph_name_from_iso8859_1[256] = {
 	_notdef,
 	_notdef,
 	_notdef,
@@ -827,7 +827,7 @@ static const struct { unsigned short u, c; } iso8859_1_from_unicode[] = {
 	{0x00ff,255},
 };
 
-const unsigned short fz_unicode_from_iso8859_7[256] = {
+const unsigned short wz_unicode_from_iso8859_7[256] = {
 	0,
 	1,
 	2,
@@ -1086,7 +1086,7 @@ const unsigned short fz_unicode_from_iso8859_7[256] = {
 	0,
 };
 
-const char *fz_glyph_name_from_iso8859_7[256] = {
+const char *wz_glyph_name_from_iso8859_7[256] = {
 	_notdef,
 	_notdef,
 	_notdef,
@@ -1440,7 +1440,7 @@ static const struct { unsigned short u, c; } iso8859_7_from_unicode[] = {
 	{0x20ac,164},
 };
 
-const unsigned short fz_unicode_from_koi8u[256] = {
+const unsigned short wz_unicode_from_koi8u[256] = {
 	0,
 	1,
 	2,
@@ -1699,7 +1699,7 @@ const unsigned short fz_unicode_from_koi8u[256] = {
 	1066,
 };
 
-const char *fz_glyph_name_from_koi8u[256] = {
+const char *wz_glyph_name_from_koi8u[256] = {
 	_notdef,
 	_notdef,
 	_notdef,
@@ -2057,7 +2057,7 @@ static const struct { unsigned short u, c; } koi8u_from_unicode[] = {
 	{0x25a0,148},
 };
 
-const unsigned short fz_unicode_from_windows_1250[256] = {
+const unsigned short wz_unicode_from_windows_1250[256] = {
 	0,
 	1,
 	2,
@@ -2316,7 +2316,7 @@ const unsigned short fz_unicode_from_windows_1250[256] = {
 	729,
 };
 
-const char *fz_glyph_name_from_windows_1250[256] = {
+const char *wz_glyph_name_from_windows_1250[256] = {
 	_notdef,
 	_notdef,
 	_notdef,
@@ -2701,7 +2701,7 @@ static const struct { unsigned short u, c; } windows_1250_from_unicode[] = {
 	{0x2122,153},
 };
 
-const unsigned short fz_unicode_from_windows_1251[256] = {
+const unsigned short wz_unicode_from_windows_1251[256] = {
 	0,
 	1,
 	2,
@@ -2960,7 +2960,7 @@ const unsigned short fz_unicode_from_windows_1251[256] = {
 	1103,
 };
 
-const char *fz_glyph_name_from_windows_1251[256] = {
+const char *wz_glyph_name_from_windows_1251[256] = {
 	_notdef,
 	_notdef,
 	_notdef,
@@ -3349,7 +3349,7 @@ static const struct { unsigned short u, c; } windows_1251_from_unicode[] = {
 	{0x2122,153},
 };
 
-const unsigned short fz_unicode_from_windows_1252[256] = {
+const unsigned short wz_unicode_from_windows_1252[256] = {
 	0,
 	1,
 	2,
@@ -3608,7 +3608,7 @@ const unsigned short fz_unicode_from_windows_1252[256] = {
 	255,
 };
 
-const char *fz_glyph_name_from_windows_1252[256] = {
+const char *wz_glyph_name_from_windows_1252[256] = {
 	_notdef,
 	_notdef,
 	_notdef,
@@ -3992,3 +3992,4 @@ static const struct { unsigned short u, c; } windows_1252_from_unicode[] = {
 	{0x20ac,128},
 	{0x2122,153},
 };
+

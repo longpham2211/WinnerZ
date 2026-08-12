@@ -24,10 +24,11 @@ struct WinChar {
     std::string font_name;
     float ascender = 0.8f;
     float descender = -0.2f;
-    
+
     bool is_underlined = false;
     bool is_strikeout = false;
-    bool is_synthetic = false;
+    bool is_synthetic = false;       // inserted space, not present in original content
+    bool is_synthetic_large = false; // synthetic space inserted for a "large" gap (>2*SPACE_DIST)
 };
 
 struct WinLine {
@@ -66,6 +67,22 @@ public:
     WinPage finish_page();
     std::string get_text(const WinPage& page);
 
+    // If true, use the (approximate) glyph bbox info supplied by the caller as-is;
+    // reserved hook for callers that later plug in real glyph-outline bboxes.
+    bool accurate_bboxes = false;
+    // If true, never insert synthetic space characters between glyphs.
+    bool inhibit_spaces = false;
+    // If true, do NOT expand ligatures (ff, fi, fl, ffi, ffl, st, and Unicode
+    // presentation forms) into their constituent characters.
+    bool preserve_ligatures = false;
+    // If true, do NOT normalize whitespace variants (tab, nbsp, unicode spaces...) to ' '.
+    bool preserve_whitespace = false;
+    // If true, run the fake-bold detection pass (scans previously emitted chars
+    // on the page for overlaid duplicate glyphs). 
+    bool collect_styles = true;
+    // Whether to attempt to join hyphenated words across lines.
+    bool dehyphenate = true;
+
 private:
     void add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name, 
                       float size, uint32_t color, bool bold, bool italic, bool serif, bool mono,
@@ -81,9 +98,9 @@ private:
     Vec2 pen;
     Vec2 lag_pen;
     Vec2 start;
-    bool dehyphenate = true;
     bool new_obj;
     bool maybe_bullet;
+    bool last_was_fake_bold;
 };
 
 } // namespace WinExtract

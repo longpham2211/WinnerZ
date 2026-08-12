@@ -1,4 +1,4 @@
-#include "bidi_imp.hpp"
+﻿#include "bidi_imp.hpp"
 
 #include <assert.h>
 #include <stdio.h>
@@ -258,7 +258,7 @@ enum
 };
 
 #if 0
-static const fz_bidi_chartype types_from_char[] =
+static const wz_bidi_chartype types_from_char[] =
 {
 // 0	   1	   2	   3	   4	   5	   6	   7	   8	   9	   a	   b	   c	   d	   e	   f
 BDI_BN, BDI_BN, BDI_BN, BDI_BN, BDI_L,  BDI_R,  BDI_BN, BDI_BN, BDI_BN, BDI_S,  BDI_B,  BDI_S,  BDI_WS, BDI_B,  BDI_BN, BDI_BN, /*00-0f*/
@@ -320,7 +320,7 @@ void reverse(uint32_t *psz, int cch)
 // Set a run of cval values at locations all prior to, but not including
 // iStart, to the new value nval.
 static
-void set_deferred_run(fz_bidi_chartype *pval, size_t cval, size_t iStart, fz_bidi_chartype nval)
+void set_deferred_run(wz_bidi_chartype *pval, size_t cval, size_t iStart, wz_bidi_chartype nval)
 {
 	size_t i;
 
@@ -331,7 +331,7 @@ void set_deferred_run(fz_bidi_chartype *pval, size_t cval, size_t iStart, fz_bid
 }
 
 static
-void set_deferred_level_run(fz_bidi_level *pval, size_t cval, size_t iStart, fz_bidi_level nval)
+void set_deferred_level_run(wz_bidi_level *pval, size_t cval, size_t iStart, wz_bidi_level nval)
 {
 	size_t i;
 
@@ -364,7 +364,7 @@ void set_deferred_level_run(fz_bidi_level *pval, size_t cval, size_t iStart, fz_
 			or at the end of the input text.
 
 ------------------------------------------------------------------------*/
-size_t fz_bidi_resolve_paragraphs(fz_bidi_chartype *types, size_t cch)
+size_t wz_bidi_resolve_paragraphs(wz_bidi_chartype *types, size_t cch)
 {
 	size_t ich;
 
@@ -390,7 +390,7 @@ size_t fz_bidi_resolve_paragraphs(fz_bidi_chartype *types, size_t cch)
 
 	Note: Ignores explicit embeddings
 ------------------------------------------------------------------------*/
-static int base_level(const fz_bidi_chartype *pcls, int cch)
+static int base_level(const wz_bidi_chartype *pcls, int cch)
 {
 	int ich;
 
@@ -414,17 +414,17 @@ static int base_level(const fz_bidi_chartype *pcls, int cch)
 
 //====== RESOLVE EXPLICIT ================================================
 
-static fz_bidi_level greater_even(fz_bidi_level i)
+static wz_bidi_level greater_even(wz_bidi_level i)
 {
 	return odd(i) ? i + 1 : i + 2;
 }
 
-static fz_bidi_level greater_odd(fz_bidi_level i)
+static wz_bidi_level greater_odd(wz_bidi_level i)
 {
 	return odd(i) ? i + 2 : i + 1;
 }
 
-static fz_bidi_chartype embedding_direction(fz_bidi_chartype level)
+static wz_bidi_chartype embedding_direction(wz_bidi_chartype level)
 {
 	return odd(level) ? BDI_R : BDI_L;
 }
@@ -448,8 +448,8 @@ static fz_bidi_chartype embedding_direction(fz_bidi_chartype level)
 		  the outermost call. The nesting counter counts the recursion
 		  depth and not the embedding level.
 ------------------------------------------------------------------------*/
-size_t fz_bidi_resolve_explicit(fz_bidi_level level, fz_bidi_chartype dir, fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch,
-				fz_bidi_level n_nest)
+size_t wz_bidi_resolve_explicit(wz_bidi_level level, wz_bidi_chartype dir, wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch,
+				wz_bidi_level n_nest)
 {
 	size_t ich;
 
@@ -463,7 +463,7 @@ size_t fz_bidi_resolve_explicit(fz_bidi_level level, fz_bidi_chartype dir, fz_bi
 	// process the text
 	for (ich = 0; ich < cch; ich++)
 	{
-		fz_bidi_chartype cls = pcls[ich];
+		wz_bidi_chartype cls = pcls[ich];
 		switch (cls)
 		{
 		case BDI_LRO:
@@ -473,7 +473,7 @@ size_t fz_bidi_resolve_explicit(fz_bidi_level level, fz_bidi_chartype dir, fz_bi
 			{
 				plevel[ich] = greater_even(level);
 				pcls[ich] = BDI_BN;
-				ich += fz_bidi_resolve_explicit(plevel[ich], (cls == BDI_LRE ? BDI_N : BDI_L),
+				ich += wz_bidi_resolve_explicit(plevel[ich], (cls == BDI_LRE ? BDI_N : BDI_L),
 							&pcls[ich+1], &plevel[ich+1],
 							 cch - (ich+1), n_nest);
 				n_nest--;
@@ -489,7 +489,7 @@ size_t fz_bidi_resolve_explicit(fz_bidi_level level, fz_bidi_chartype dir, fz_bi
 			{
 				plevel[ich] = greater_odd(level);
 				pcls[ich] = BDI_BN;
-				ich += fz_bidi_resolve_explicit(plevel[ich], (cls == BDI_RLE ? BDI_N : BDI_R),
+				ich += wz_bidi_resolve_explicit(plevel[ich], (cls == BDI_RLE ? BDI_N : BDI_R),
 								&pcls[ich+1], &plevel[ich+1],
 								 cch - (ich+1), n_nest);
 				n_nest--;
@@ -616,9 +616,9 @@ enum bidi_action // possible actions
 	LxL = (BDI_L << 4) + BDI_L	// set run to L, set current to L
 };
 
-typedef uint16_t fz_bidi_action;
+typedef uint16_t wz_bidi_action;
 
-static const fz_bidi_action action_weak[][10] =
+static const wz_bidi_action action_weak[][10] =
 {
 	//   N,.. L,   R,  AN,  EN,  AL, NSM,  CS,..ES,  ET,
 /*xa*/ { xxx, xxx, xxx, xxx, xxA, xxR, xxR, xxN, xxN, xxN }, /* arabic letter			*/
@@ -649,13 +649,13 @@ static const fz_bidi_action action_weak[][10] =
 };
 
 static
-fz_bidi_chartype get_deferred_type(fz_bidi_action action)
+wz_bidi_chartype get_deferred_type(wz_bidi_action action)
 {
 	return (action >> 4) & 0xF;
 }
 
 static
-fz_bidi_chartype get_resolved_type(fz_bidi_action action)
+wz_bidi_chartype get_resolved_type(wz_bidi_action action)
 {
 	return action & 0xF;
 }
@@ -701,18 +701,18 @@ fz_bidi_chartype get_resolved_type(fz_bidi_action action)
 	Note: On input only these directional classes are expected
 		  AL, HL, R, L,  ON, BDI_BN, NSM, AN, EN, ES, ET, CS,
 ------------------------------------------------------------------------*/
-void fz_bidi_resolve_weak(fz_context *ctx, fz_bidi_level baselevel, fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch)
+void wz_bidi_resolve_weak(wz_context *ctx, wz_bidi_level baselevel, wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch)
 {
 	(void)ctx;
 
 	int state = odd(baselevel) ? xr : xl;
-	fz_bidi_chartype cls;
+	wz_bidi_chartype cls;
 	size_t ich;
-	fz_bidi_action action;
-	fz_bidi_chartype cls_run;
-	fz_bidi_chartype cls_new;
+	wz_bidi_action action;
+	wz_bidi_chartype cls_run;
+	wz_bidi_chartype cls_new;
 
-	fz_bidi_level level = baselevel;
+	wz_bidi_level level = baselevel;
 
 	size_t cch_run = 0;
 
@@ -809,17 +809,17 @@ enum neutral_action
 	LnL = (1<<4)+BDI_L	// set run and EN to L
 };
 
-static fz_bidi_chartype
-get_deferred_neutrals(fz_bidi_action action, fz_bidi_level level)
+static wz_bidi_chartype
+get_deferred_neutrals(wz_bidi_action action, wz_bidi_level level)
 {
 	action = (action >> 4) & 0xF;
 	if (action == (En >> 4))
 		return embedding_direction(level);
 	else
-		return static_cast<fz_bidi_chartype>(action);
+		return static_cast<wz_bidi_chartype>(action);
 }
 
-static fz_bidi_chartype get_resolved_neutrals(fz_bidi_action action)
+static wz_bidi_chartype get_resolved_neutrals(wz_bidi_action action)
 {
 	action = action & 0xF;
 
@@ -833,7 +833,7 @@ static fz_bidi_chartype get_resolved_neutrals(fz_bidi_action action)
 	 * so that we understand what changed in case we ever update to
 	 * a newer release of the bidirectional code.
 	 */
-	return static_cast<fz_bidi_chartype>(action);
+	return static_cast<wz_bidi_chartype>(action);
 }
 
 // state values
@@ -904,21 +904,21 @@ static const int state_neutrals[][5] =
 
 		  W8 resolves a number of ENs to L
 ------------------------------------------------------------------------*/
-void fz_bidi_resolve_neutrals(fz_bidi_level baselevel, fz_bidi_chartype *pcls, const fz_bidi_level *plevel, size_t cch)
+void wz_bidi_resolve_neutrals(wz_bidi_level baselevel, wz_bidi_chartype *pcls, const wz_bidi_level *plevel, size_t cch)
 {
 	// the state at the start of text depends on the base level
 	int state = odd(baselevel) ? r : l;
-	fz_bidi_chartype cls;
+	wz_bidi_chartype cls;
 	size_t ich;
-	fz_bidi_chartype cls_run;
+	wz_bidi_chartype cls_run;
 
 	size_t cch_run = 0;
-	fz_bidi_level level = baselevel;
+	wz_bidi_level level = baselevel;
 
 	for (ich = 0; ich < cch; ich++)
 	{
 		int action;
-		fz_bidi_chartype cls_new;
+		wz_bidi_chartype cls_new;
 
 		// ignore boundary neutrals
 		if (pcls[ich] == BDI_BN)
@@ -983,7 +983,7 @@ void fz_bidi_resolve_neutrals(fz_bidi_level baselevel, fz_bidi_chartype *pcls, c
 		  Accepted subset of direction classes
 		  R, L, AN, EN
 ------------------------------------------------------------------------*/
-static const fz_bidi_level add_level[][4] =
+static const wz_bidi_level add_level[][4] =
 {
 	// L,  R,	AN, EN = cls
 					// level =
@@ -992,7 +992,7 @@ static const fz_bidi_level add_level[][4] =
 
 };
 
-void fz_bidi_resolve_implicit(const fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch)
+void wz_bidi_resolve_implicit(const wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch)
 {
 	size_t ich;
 
@@ -1048,7 +1048,7 @@ static int resolve_lines(uint32_t *psz_input, int *pbrk, int cch)
 #endif
 
 /*------------------------------------------------------------------------
-	Function: fz_bidi_resolve_whitespace
+	Function: wz_bidi_resolve_whitespace
 
 	Resolves levels for WS and S
 	Implements rule L1 of the Unicode bidi Algorithm.
@@ -1064,11 +1064,11 @@ static int resolve_lines(uint32_t *psz_input, int *pbrk, int cch)
 		  a real implementation, cch and the initial pointer values
 		  would have to be adjusted.
 ------------------------------------------------------------------------*/
-void fz_bidi_resolve_whitespace(fz_bidi_level baselevel, const fz_bidi_chartype *pcls, fz_bidi_level *plevel,
+void wz_bidi_resolve_whitespace(wz_bidi_level baselevel, const wz_bidi_chartype *pcls, wz_bidi_level *plevel,
 				size_t cch)
 {
 	size_t cchrun = 0;
-	fz_bidi_level oldlevel = baselevel;
+	wz_bidi_level oldlevel = baselevel;
 	size_t ich;
 
 	for (ich = 0; ich < cch; ich++)
@@ -1129,7 +1129,7 @@ void fz_bidi_resolve_whitespace(fz_bidi_level baselevel, const fz_bidi_chartype 
 
 	Note: this should be applied a line at a time
 -------------------------------------------------------------------------*/
-static int reorderLevel(fz_bidi_level level, uint32_t *psz_text, const fz_bidi_level *plevel, int cch,
+static int reorderLevel(wz_bidi_level level, uint32_t *psz_text, const wz_bidi_level *plevel, int cch,
 				 int f_reverse)
 {
 	int ich;
@@ -1156,7 +1156,7 @@ static int reorderLevel(fz_bidi_level level, uint32_t *psz_text, const fz_bidi_l
 	return ich;
 }
 
-int Bidi_reorder(fz_bidi_level baselevel, uint32_t *psz_text, const fz_bidi_level *plevel, int cch)
+int Bidi_reorder(wz_bidi_level baselevel, uint32_t *psz_text, const wz_bidi_level *plevel, int cch)
 {
 	int ich = 0;
 
@@ -1168,3 +1168,4 @@ int Bidi_reorder(fz_bidi_level baselevel, uint32_t *psz_text, const fz_bidi_leve
 	return ich;
 }
 #endif
+

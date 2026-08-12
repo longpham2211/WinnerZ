@@ -1,28 +1,28 @@
-#pragma once
+﻿#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
 
-struct fz_context_s;
-typedef struct fz_context_s fz_context;
+struct wz_context_s;
+typedef struct wz_context_s wz_context;
 
 typedef enum
 {
-	FZ_BIDI_LTR = 0,
-	FZ_BIDI_RTL = 1,
-	FZ_BIDI_NEUTRAL = 2,
-	FZ_BIDI_UNSET = 3
+	WZ_BIDI_LTR = 0,
+	WZ_BIDI_RTL = 1,
+	WZ_BIDI_NEUTRAL = 2,
+	WZ_BIDI_UNSET = 3
 }
-fz_bidi_direction;
+wz_bidi_direction;
 
 typedef enum
 {
-	FZ_BIDI_CLASSIFY_WHITE_SPACE = 1,
-	FZ_BIDI_REPLACE_TAB = 2
+	WZ_BIDI_CLASSIFY_WHITE_SPACE = 1,
+	WZ_BIDI_REPLACE_TAB = 2
 }
-fz_bidi_flags;
+wz_bidi_flags;
 
-typedef void (fz_bidi_fragment_fn)(const uint32_t *fragment,
+typedef void (wz_bidi_fragment_fn)(const uint32_t *fragment,
 					size_t fragmentLen,
 					int bidiLevel,
 					int script,
@@ -92,24 +92,25 @@ enum
 	BDI_N = BDI_ON	/* alias, where ON, WS and S are treated the same */
 };
 
-typedef int fz_bidi_level; /* Note: Max level is 125 */
-typedef uint8_t fz_bidi_chartype;
+typedef int wz_bidi_level; /* Note: Max level is 125 */
+typedef uint8_t wz_bidi_chartype;
 
 enum
 {
 	BIDI_LEVEL_MAX = 125 /* Updated for 6.3.0 */
 };
 
-void fz_bidi_resolve_neutrals(fz_bidi_level baselevel, fz_bidi_chartype *pcls, const fz_bidi_level *plevel, size_t cch);
-void fz_bidi_resolve_implicit(const fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch);
-void fz_bidi_resolve_weak(fz_context *ctx, fz_bidi_level baselevel, fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch);
-void fz_bidi_resolve_whitespace(fz_bidi_level baselevel, const fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch);
-size_t fz_bidi_resolve_explicit(fz_bidi_level level, fz_bidi_chartype dir, fz_bidi_chartype *pcls, fz_bidi_level *plevel, size_t cch, fz_bidi_level nNest);
-size_t fz_bidi_resolve_paragraphs(fz_bidi_chartype *types, size_t cch);
-void fz_bidi_fragment_text(fz_context *ctx,
+void wz_bidi_resolve_neutrals(wz_bidi_level baselevel, wz_bidi_chartype *pcls, const wz_bidi_level *plevel, size_t cch);
+void wz_bidi_resolve_implicit(const wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch);
+void wz_bidi_resolve_weak(wz_context *ctx, wz_bidi_level baselevel, wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch);
+void wz_bidi_resolve_whitespace(wz_bidi_level baselevel, const wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch);
+size_t wz_bidi_resolve_explicit(wz_bidi_level level, wz_bidi_chartype dir, wz_bidi_chartype *pcls, wz_bidi_level *plevel, size_t cch, wz_bidi_level nNest);
+size_t wz_bidi_resolve_paragraphs(wz_bidi_chartype *types, size_t cch);
+void wz_bidi_fragment_text(wz_context *ctx,
 			const uint32_t *text,
 			size_t textlen,
-			fz_bidi_direction *baseDir,
-			fz_bidi_fragment_fn *callback,
+			wz_bidi_direction *baseDir,
+			wz_bidi_fragment_fn *callback,
 			void *arg,
 			int flags);
+

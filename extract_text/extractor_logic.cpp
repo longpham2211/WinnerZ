@@ -1,4 +1,4 @@
-#include "extractor_logic.hpp"
+﻿#include "extractor_logic.hpp"
 #include "ucdn.hpp"
 #include "bidi_imp.hpp"
 #include <algorithm>
@@ -10,7 +10,7 @@ constexpr float PARAGRAPH_DIST = 1.5f;
 constexpr float SPACE_DIST = 0.15f;
 constexpr float SPACE_MAX_DIST = 0.8f;
 constexpr float BASE_MAX_DIST = 0.8f;
-constexpr float FAKE_BOLD_MAX_DIST = 0.05f;
+constexpr float FAKE_BOLD_MAX_DIST = 0.1f;
 
 struct InternalMatrix { float a, b, c, d, e, f; };
 
@@ -61,6 +61,10 @@ static bool plausible_bullet(int c) {
     }
 }
 
+static bool is_mark_non_spacing(int c) {
+    return ucdn_get_general_category(c) == UCDN_GENERAL_CATEGORY_MN;
+}
+
 static void merge_rect(Rect& dst, const Rect& src, bool& has_value) {
     if (!has_value) { dst = src; has_value = true; return; }
     dst.x0 = std::min(dst.x0, src.x0);
@@ -75,7 +79,8 @@ WinTextExtractor::WinTextExtractor() {
     last_char = ' '; last_bidi = 0; 
     pen = {0, 0}; lag_pen = {0, 0}; start = {0, 0};
     new_obj = true; maybe_bullet = false;
-    dehyphenate = true; 
+    // first no-glyph char (if any) is not spuriously treated as a swallowed dup.
+    last_was_fake_bold = true;
 }
 
 void WinTextExtractor::begin_page(float width, float height) {
@@ -86,10 +91,104 @@ void WinTextExtractor::begin_page(float width, float height) {
     last_char = ' '; last_bidi = 0;
     pen = {0, 0}; lag_pen = {0, 0}; start = {0,0};
     new_obj = true; maybe_bullet = false;
+    last_was_fake_bold = true;
 }
 
 void WinTextExtractor::hint_new_text_obj() {
     new_obj = true;
+}
+
+static bool is_within_fake_bold_distance(float a, float b, float size) {
+    float d = a - b;
+    if (d < 0) d = -d;
+    return size > 0 ? (d / size) < FAKE_BOLD_MAX_DIST : d < FAKE_BOLD_MAX_DIST;
+}
+
+static bool check_for_fake_bold(
+    WinBlock* first_block_ptr,
+    std::vector<WinBlock>& blocks,
+    const std::string &font_name,
+    int c,
+    Vec2 p,
+    float size,
+    bool bold,
+    bool italic,
+    uint32_t color
+)
+{
+    (void)first_block_ptr;
+    for (auto& block : blocks) {
+        if (block.type != BlockType::TEXT) continue;
+        for (auto& line : block.lines) {
+            WinChar* prev_char = nullptr;
+            for (auto& ch : line.chars) {
+                if (ch.c == c &&
+                    is_within_fake_bold_distance(ch.origin.x, p.x, size) &&
+                    is_within_fake_bold_distance(ch.origin.y, p.y, size) &&
+                    ch.font_name == font_name)
+                {
+                    if (c == ' ') {
+                        // Overlaying spaces only counts as boldening if a
+                        // neighbouring char is already marked bold.
+                        WinChar* next_char = nullptr;
+                        // find char after ch within the same line
+                        for (size_t k = 0; k < line.chars.size(); ++k) {
+                            if (&line.chars[k] == &ch && k + 1 < line.chars.size()) {
+                                next_char = &line.chars[k + 1];
+                            }
+                        }
+                        if ((prev_char && prev_char->is_bold) || (next_char && next_char->is_bold)) {
+                            ch.is_bold = true;
+                        }
+                        ch.color = color;
+                        return true;
+                    } else {
+                        ch.is_bold = true;
+                        ch.color = color;
+                        return true;
+                    }
+                }
+                prev_char = &ch;
+            }
+        }
+    }
+    (void)italic;
+    (void)bold;
+    return false;
+}
+
+// Ligature / presentation-form expansion + whitespace normalization, matching
+// the pre-processing MuPDF does in fz_add_stext_char() before ever reaching
+static bool expand_ligature(int c, int out[3], int& n) {
+    switch (c) {
+        case 0xFB00: out[0]='f'; out[1]='f'; n=2; return true;
+        case 0xFB01: out[0]='f'; out[1]='i'; n=2; return true;
+        case 0xFB02: out[0]='f'; out[1]='l'; n=2; return true;
+        case 0xFB03: out[0]='f'; out[1]='f'; out[2]='i'; n=3; return true;
+        case 0xFB04: out[0]='f'; out[1]='f'; out[2]='l'; n=3; return true;
+        case 0xFB05: /* long st */
+        case 0xFB06: out[0]='s'; out[1]='t'; n=2; return true;
+        default: return false;
+    }
+}
+
+static int normalize_whitespace(int c) {
+    switch (c) {
+        case 0x0009: /* tab */
+        case 0x0020: /* space */
+        case 0x00A0: /* no-break space */
+        case 0x1680: /* ogham space mark */
+        case 0x180E: /* mongolian vowel separator */
+        case 0x2000: case 0x2001: case 0x2002: case 0x2003: case 0x2004:
+        case 0x2005: case 0x2006: case 0x2007: case 0x2008: case 0x2009:
+        case 0x200A: /* en/em/etc spaces */
+        case 0x202F: /* narrow no-break space */
+        case 0x205F: /* medium mathematical space */
+        case 0x3000: /* ideographic space */
+            return ' ';
+        default:
+            return c;
+    }
 }
 
 void WinTextExtractor::add_char(int unicode, float x, float y, float adv, float matrix[6], 
@@ -98,17 +197,42 @@ void WinTextExtractor::add_char(int unicode, float x, float y, float adv, float 
                   int bidi_level, bool has_real_glyph) 
 {
     if (unicode == -1) return;
-
+    if (unicode == '\r' || unicode == '\n') return;
     int bidi = (bidi_level >= 0) ? bidi_level : 0;
-    
-    int main_glyph = has_real_glyph ? 1 : -1; 
+    int main_glyph = has_real_glyph ? 1 : -1;
+    int c = unicode;
+    if (!preserve_ligatures) {
+        int lig[3];
+        int n = 0;
+        if (expand_ligature(c, lig, n)) {
+            add_char_imp(lig[0], main_glyph, adv, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
+            for (int i = 1; i < n; ++i)
+                add_char_imp(lig[i], -1, 0, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
+            return;
+        }
+        // Alphabetic and Arabic presentation forms -> compatibility decompose.
+        if ((c >= 0xFB00 && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFC)) {
+            uint32_t decomp[18];
+            int n2 = ucdn_compat_decompose((uint32_t)c, decomp);
+            if (n2 > 0) {
+                add_char_imp((int)decomp[0], main_glyph, adv, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
+                for (int i = 1; i < n2; ++i)
+                    add_char_imp((int)decomp[i], -1, 0, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
+                return;
+            }
+        }
+    }
 
-    add_char_imp(unicode, main_glyph, adv, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
+    if (!preserve_whitespace) {
+        c = normalize_whitespace(c);
+    }
+
+    add_char_imp(c, main_glyph, adv, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
 }
 
-void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name, 
-                      float size, uint32_t color, bool bold, bool italic, bool serif, bool mono,
-                      int wmode, int bidi, bool force_new_line, float ascender, float descender, bool is_synthetic_space) 
+void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name,
+                                    float size, uint32_t color, bool bold, bool italic, bool serif, bool mono,
+                                    int wmode, int bidi, bool force_new_line, float ascender, float descender, bool is_synthetic_space) 
 {
     InternalMatrix m = { matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5] };
     bool new_para = false;
@@ -116,16 +240,17 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     int add_space = 0;
     Vec2 dir, ndir, p, q, delta;
     float spacing = 0, base_offset = 0;
-
+    
     bidi = bidi & 1; 
-
+    
     float m_size = matrix_expansion(m);
-    if (m_size <= 0.0f) m_size = size;
-
+    if (m_size <= 0.001f) m_size = size;
+    if (m_size <= 0.001f) m_size = 1.0f;
+    
     if (wmode == 0) dir = {1.0f, 0.0f}; else dir = {0.0f, -1.0f};
     dir = transform_vec(dir, m);
     ndir = normalize_vec(dir);
-
+    
     if (wmode == 0) {
         p.x = m.e; p.y = m.f;
         q.x = m.e + adv * dir.x; q.y = m.f + adv * dir.y;
@@ -133,27 +258,90 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         p.x = m.e - adv * dir.x; p.y = m.f - adv * dir.y;
         q.x = m.e; q.y = m.f;
     }
+    
+    auto expand_bbox = [](auto& target_bbox, const auto& quad) {
+        float min_x = std::min({quad.ul.x, quad.ur.x, quad.ll.x, quad.lr.x});
+        float max_x = std::max({quad.ul.x, quad.ur.x, quad.ll.x, quad.lr.x});
+        float min_y = std::min({quad.ul.y, quad.ur.y, quad.ll.y, quad.lr.y});
+        float max_y = std::max({quad.ul.y, quad.ur.y, quad.ll.y, quad.lr.y});
+        
+        if (target_bbox.x0 == target_bbox.x1 && target_bbox.y0 == target_bbox.y1) {
+            target_bbox.x0 = min_x; target_bbox.y0 = min_y; 
+            target_bbox.x1 = max_x; target_bbox.y1 = max_y;
+        } else {
+            target_bbox.x0 = std::min(target_bbox.x0, min_x);
+            target_bbox.y0 = std::min(target_bbox.y0, min_y);
+            target_bbox.x1 = std::max(target_bbox.x1, max_x);
+            target_bbox.y1 = std::max(target_bbox.y1, max_y);
+        }
+    };
 
+    // Helper to build a Quad for a char/space, shared by all three insertion sites.
+    // When accurate_bboxes is set, this is the point to plug in real glyph outline
+    // bboxes instead of the ascender/descender approximation (not available in this
+    auto make_quad = [&](Vec2 from, Vec2 to, float asc, float desc, int wm) -> Quad {
+        Vec2 a = {0, asc};
+        Vec2 d = {0, desc};
+        if (wm == 1) { a = {1, 0}; d = {0, 0}; }
+        a = transform_vec(a, m);
+        d = transform_vec(d, m);
+
+        Quad q_out;
+        q_out.ll = {from.x + d.x, from.y + d.y};
+        q_out.ul = {from.x + a.x, from.y + a.y};
+        q_out.lr = {to.x + d.x,   to.y + d.y};
+        q_out.ur = {to.x + a.x,   to.y + a.y};
+
+        if (accurate_bboxes) {
+            // Reserved hook: override q_out with a real glyph outline bbox when
+            // the font engine can supply one.
+        }
+        return q_out;
+    };
+    
     cur_block = page.blocks.empty() ? nullptr : &page.blocks.back();
+    if (cur_block && cur_block->type != BlockType::TEXT) {
+        cur_block = nullptr;
+    }
     cur_line = cur_block ? (cur_block->lines.empty() ? nullptr : &cur_block->lines.back()) : nullptr;
-
-    if (cur_line != nullptr && glyph == -1) {
+    
+    if (collect_styles) {
+        if (glyph < 0) {
+            if (last_was_fake_bold) {
+                last_was_fake_bold = false;
+                return;
+            }
+        } else if (check_for_fake_bold(page.blocks.empty() ? nullptr : &page.blocks.front(), page.blocks, font_name, c, p, m_size, bold, italic, color)) {
+            last_was_fake_bold = true;
+            return;
+        } else {
+            last_was_fake_bold = false;
+        }
+    }
+    
+    bool is_mark = is_mark_non_spacing(c);
+    
+    if (cur_line != nullptr && (glyph == -1 || is_mark)) {
         WinChar wc;
         wc.c = c; wc.bidi = bidi; wc.origin = pen; wc.size = m_size; 
         wc.color = color; wc.is_bold = bold; wc.is_italic = italic; 
         wc.is_serif = serif; wc.is_mono = mono; wc.font_name = font_name;
+        wc.ascender = ascender;
+        wc.descender = descender;
         
-        wc.quad.ll = {pen.x, pen.y}; wc.quad.ul = {pen.x, pen.y};
-        wc.quad.lr = {pen.x, pen.y}; wc.quad.ur = {pen.x, pen.y};
+        wc.quad = make_quad(pen, pen, ascender, descender, wmode);
         
         cur_line->chars.push_back(wc);
+        
+        expand_bbox(cur_line->bbox, wc.quad);
+        if (cur_block) expand_bbox(cur_block->bbox, wc.quad);
         
         last_bidi = bidi;
         last_char = c;
         last_line = cur_line;
         return; 
     }
-
+    
     if (cur_line == nullptr || cur_line->wmode != wmode || vec_dot(ndir, cur_line->dir) < 0.999f) {
         new_para = true;
         new_line = true;
@@ -162,20 +350,20 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         if (dist < FAKE_BOLD_MAX_DIST && c == last_char && glyph >= 0) {
             return;
         }
-
+        
         delta.x = p.x - pen.x;
         delta.y = p.y - pen.y;
-
+        
         spacing = (ndir.x * delta.x + ndir.y * delta.y) / m_size;
         base_offset = (-ndir.y * delta.x + ndir.x * delta.y) / m_size;
-
+        
         if (std::abs(base_offset) < BASE_MAX_DIST) {
             if ((bidi & 1) != (last_bidi & 1)) {
                 new_line = false; 
             } else if (bidi & 1) { 
                 Vec2 logical_delta = {p.x - lag_pen.x, p.y - lag_pen.y};
                 float logical_spacing = (ndir.x * logical_delta.x + ndir.y * logical_delta.y) / m_size + adv;
-
+                
                 if (std::abs(logical_spacing) < SPACE_DIST) new_line = false;
                 else if (std::abs(spacing) < SPACE_DIST) { bidi = 3; new_line = false; } 
                 else if (logical_spacing < 0 && logical_spacing > -SPACE_MAX_DIST) {
@@ -197,7 +385,10 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
                 } else new_line = true;
             }
         } else if (std::abs(base_offset) <= PARAGRAPH_DIST) {
-            if (wmode == 0 && cur_line && new_obj) {
+            // Indent check to spot text-indent style paragraphs
+            // this runs on every valid new-line, not just the first char after
+            // a new PDF text object.
+            if (wmode == 0 && cur_line) {
                 if ((p.x - start.x) > 0.5f && !maybe_bullet) new_para = true; 
             }
             new_line = true;
@@ -206,17 +397,19 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
             new_line = true;
         }
     }
-
+    
+    // Lazy-vector flushing would go here if BlockType::IMAGE/VECTOR interleaving
+    
     if (new_para || !cur_block) {
         page.blocks.push_back({BlockType::TEXT, {0, 0, 0, 0}, {}});
         cur_block = &page.blocks.back();
         cur_line = nullptr;
     }
-
+    
     if (new_line && this->dehyphenate && is_unicode_hyphen(last_char) && last_line != nullptr) {
         last_line->joined = true;
     }
-
+    
     if (new_line || !cur_line || force_new_line) {
         page.blocks.back().lines.push_back({{0, 0, 0, 0}, ndir, wmode, false, {}});
         cur_line = &page.blocks.back().lines.back();
@@ -224,10 +417,10 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         if (glyph == -2) maybe_bullet = true;
         else maybe_bullet = plausible_bullet(c);
     }
-
+    
     if (glyph == -2) glyph = -1;
-
-    if (add_space > 0) {
+    
+    if (c != ' ' && add_space > 0 && !inhibit_spaces) {
         WinChar space_char;
         space_char.c = ' ';
         space_char.bidi = bidi;
@@ -240,23 +433,18 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
         space_char.is_mono = mono;
         space_char.font_name = font_name;
         space_char.is_synthetic = true;
+        space_char.is_synthetic_large = (add_space > 1);
         space_char.ascender = ascender;
         space_char.descender = descender;
-
-        Vec2 sa = {0, ascender};
-        Vec2 sd = {0, descender};
-        if (wmode == 1) { sa = {1, 0}; sd = {0, 0}; }
-        sa = transform_vec(sa, m);
-        sd = transform_vec(sd, m);
-
-        space_char.quad.ll = {pen.x + sd.x, pen.y + sd.y};
-        space_char.quad.ul = {pen.x + sa.x, pen.y + sa.y};
-        space_char.quad.lr = {p.x + sd.x, p.y + sd.y};
-        space_char.quad.ur = {p.x + sa.x, p.y + sa.y};
-
+        
+        space_char.quad = make_quad(pen, p, ascender, descender, wmode);
+        
         cur_line->chars.push_back(space_char);
+        
+        expand_bbox(cur_line->bbox, space_char.quad);
+        if (cur_block) expand_bbox(cur_block->bbox, space_char.quad);
     }
-
+    
     WinChar wc;
     wc.c = c; wc.bidi = bidi; wc.origin = p; wc.size = m_size;
     wc.color = color; wc.is_bold = bold; wc.is_italic = italic;
@@ -266,22 +454,14 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     wc.is_synthetic = is_synthetic_space;
     wc.ascender = ascender;
     wc.descender = descender;
-
-    Vec2 a = {0, ascender};
-    Vec2 d = {0, descender}; 
-
-    if (wmode == 1) { a = {1, 0}; d = {0, 0}; }
-
-    a = transform_vec(a, m);
-    d = transform_vec(d, m);
-
-    wc.quad.ll = {p.x + d.x, p.y + d.y};
-    wc.quad.ul = {p.x + a.x, p.y + a.y};
-    wc.quad.lr = {q.x + d.x, q.y + d.y};
-    wc.quad.ur = {q.x + a.x, q.y + a.y};
-
+    
+    wc.quad = make_quad(p, q, ascender, descender, wmode);
+    
     cur_line->chars.push_back(wc);
-
+    
+    expand_bbox(cur_line->bbox, wc.quad);
+    if (cur_block) expand_bbox(cur_block->bbox, wc.quad);
+    
     last_char = c;
     last_bidi = bidi;
     last_line = cur_line;
@@ -295,7 +475,7 @@ struct BidiState {
     std::vector<WinChar>* chars;
 };
 
-static void fz_bidi_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
+static void wz_bidi_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
     BidiState* state = static_cast<BidiState*>(arg);
     size_t offset = fragment - state->text_start;
     for (size_t i = 0; i < fragmentLen; ++i) {
@@ -307,6 +487,13 @@ WinPage WinTextExtractor::finish_page() {
     auto reverse_bidi_span = [](std::vector<WinChar>& chars, size_t start, size_t end) {
         std::reverse(chars.begin() + start, chars.begin() + end);
     };
+
+    // ends in a hyphen, mark it joined so get_text() drops the trailing hyphen.
+    // Previously this only happened when a *new* line started (mid-page), so a
+    // hyphen on the page's final line was never caught.
+    if (this->dehyphenate && is_unicode_hyphen(last_char) && last_line != nullptr) {
+        last_line->joined = true;
+    }
 
     for (auto& block : page.blocks) {
         bool block_has_bbox = false;
@@ -335,7 +522,6 @@ WinPage WinTextExtractor::finish_page() {
             }
 
             if (rtl_count > 0 && !line.chars.empty()) {
-                // Ensure visual left-to-right sort before applying UBA
                 std::stable_sort(line.chars.begin(), line.chars.end(), [](const WinChar& a, const WinChar& b) {
                     return a.quad.ll.x < b.quad.ll.x;
                 });
@@ -346,8 +532,8 @@ WinPage WinTextExtractor::finish_page() {
                 }
                 
                 BidiState state = { text.data(), &line.chars };
-                fz_bidi_direction baseDir = FZ_BIDI_UNSET;
-                fz_bidi_fragment_text(nullptr, text.data(), text.size(), &baseDir, fz_bidi_cb, &state, 0);
+                wz_bidi_direction baseDir = WZ_BIDI_UNSET;
+                wz_bidi_fragment_text(nullptr, text.data(), text.size(), &baseDir, wz_bidi_cb, &state, 0);
 
                 int max_level = 0;
                 for (size_t i = 0; i < line.chars.size(); ++i) {
@@ -436,7 +622,7 @@ std::string WinTextExtractor::get_text(const WinPage& p) {
                 }
             }
         }
-        if (b < p.blocks.size() - 1) text_out += "\n\n";
+        if (b < p.blocks.size() - 1) text_out += "\n";
     }
     return text_out;
 }

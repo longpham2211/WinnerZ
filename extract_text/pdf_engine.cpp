@@ -18,7 +18,7 @@
 #include <unordered_map>
 #include <cctype>
 #include <cstdio>
-
+#include <cctype> 
 #include <string>
 #include <vector>
 #include <cctype>
@@ -70,6 +70,81 @@ static long wz_strtol(const char* nptr, char** endptr, int base) {
     }
     if (endptr) *endptr = const_cast<char*>(p);
     return result * sign;
+}
+
+// Synchronize real number reading format
+static double wz_strtod(const char* str, char** endptr = nullptr) {
+    double result = 0.0;
+    double fraction = 0.0;
+    double divisor = 1.0;
+    int sign = 1;
+    int exp_sign = 1;
+    int exp = 0;
+    const char* p = str;
+
+    while (*p && std::isspace(static_cast<unsigned char>(*p))) ++p;
+
+    if (*p == '-') { sign = -1; ++p; } 
+    else if (*p == '+') { ++p; }
+
+    const char* start_digits = p;
+
+    while (*p >= '0' && *p <= '9') {
+        result = result * 10.0 + (*p - '0');
+        ++p;
+    }
+
+    if (*p == '.') {
+        ++p;
+        while (*p >= '0' && *p <= '9') {
+            fraction = fraction * 10.0 + (*p - '0');
+            divisor *= 10.0;
+            ++p;
+        }
+    }
+
+    if (p == start_digits && divisor == 1.0) {
+        if (endptr) *endptr = const_cast<char*>(str);
+        return 0.0;
+    }
+
+    result += fraction / divisor;
+    result *= sign;
+
+    if (*p == 'e' || *p == 'E') {
+        const char* exp_ptr = p + 1;
+        if (*exp_ptr == '-') { exp_sign = -1; ++exp_ptr; } 
+        else if (*exp_ptr == '+') { ++exp_ptr; }
+
+        if (*exp_ptr >= '0' && *exp_ptr <= '9') {
+            while (*exp_ptr >= '0' && *exp_ptr <= '9') {
+                exp = exp * 10 + (*exp_ptr - '0');
+                ++exp_ptr;
+            }
+            
+            double scale = 1.0;
+            double base = 10.0;
+            int temp_exp = exp;
+            
+            while (temp_exp > 0) {
+                if (temp_exp & 1) { 
+                    scale *= base;
+                }
+                base *= base;      
+                temp_exp >>= 1;
+            }
+
+            if (exp_sign < 0) {
+                result /= scale; 
+            } else {
+                result *= scale;
+            }
+            p = exp_ptr;
+        }
+    }
+
+    if (endptr) *endptr = const_cast<char*>(p);
+    return result;
 }
 
 static bool wz_parse_obj_ref(const char* p, int& id, int& gen) {
@@ -349,7 +424,11 @@ struct TextState {
 };
 
 static std::string to_lower_ascii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') {
+            c += ('a' - 'A'); 
+        }
+    }
     return s;
 }
 
@@ -739,7 +818,7 @@ static double parse_number_token(const std::vector<uint8_t>& stream, size_t& i) 
         ++i;
     }
     std::string n(reinterpret_cast<const char*>(stream.data() + start), i - start);
-    return std::strtod(n.c_str(), nullptr);
+    return wz_strtod(n.c_str(), nullptr);
 }
 
 static bool parse_operand(const std::vector<uint8_t>& stream, size_t& i, PdfToken& out);
@@ -1650,7 +1729,7 @@ static void set_identity(float m[6]) {
 }
 
 static void move_text_position(TextState& st, float tx, float ty) {
-    // PDF spec: new_tlm = translate(tx, ty) × old_tlm
+    // PDF spec: new_tlm = translate(tx, ty) Ă— old_tlm
     // = [tlm[0], tlm[1], tlm[2], tlm[3], tx*tlm[0]+ty*tlm[2]+tlm[4], tx*tlm[1]+ty*tlm[3]+tlm[5]]
     st.tlm[4] += tx * st.tlm[0] + ty * st.tlm[2];
     st.tlm[5] += tx * st.tlm[1] + ty * st.tlm[3];
@@ -2596,7 +2675,7 @@ static bool parse_float_token_strict(const std::string& token, float& out_value)
     }
 
     char* end_ptr = nullptr;
-    const double v = std::strtod(t.c_str(), &end_ptr);
+    const double v = wz_strtod(t.c_str(), &end_ptr);
     if (end_ptr == t.c_str()) {
         return false;
     }
@@ -3627,19 +3706,19 @@ static std::map<int, int> make_glyph_table_encoding_map(const char *const names[
 }
 
 static std::map<int, int> make_mac_roman_encoding_map() {
-    return make_glyph_table_encoding_map(fz_glyph_name_from_mac_roman);
+    return make_glyph_table_encoding_map(wz_glyph_name_from_mac_roman);
 }
 
 static std::map<int, int> make_win_ansi_encoding_map() {
-    return make_glyph_table_encoding_map(fz_glyph_name_from_win_ansi);
+    return make_glyph_table_encoding_map(wz_glyph_name_from_win_ansi);
 }
 
 static std::map<int, int> make_standard_encoding_map() {
-    return make_glyph_table_encoding_map(fz_glyph_name_from_adobe_standard);
+    return make_glyph_table_encoding_map(wz_glyph_name_from_adobe_standard);
 }
 
 static std::map<int, int> make_mac_expert_encoding_map() {
-    return make_glyph_table_encoding_map(fz_glyph_name_from_mac_expert);
+    return make_glyph_table_encoding_map(wz_glyph_name_from_mac_expert);
 }
 
 static std::map<int, int> build_encoding_map(const std::string& encoding_name) {
@@ -4200,7 +4279,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
 
         // not absolute RGB 0. Keep that anchor for parity in Separation /Black flows.
         if (cc <= 1e-6f && mm <= 1e-6f && yy <= 1e-6f && kk >= 0.999f) {
-            return (35u << 16) | (31u << 8) | 32u; // 0x231f20 to match MuPDF perfectly
+            return (35u << 16) | (31u << 8) | 32u; 
         }
 
         const float r = 1.0f - std::min(1.0f, cc + kk);
@@ -4674,7 +4753,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                 if (cp <= 0 || cp > 0x10FFFF) {
                     cp = 0xFFFD; 
                 }
-
+                
                 if (!keep_current_bidi) {
                     int bidi_class = UCDN_BIDI_CLASS_ON;
                     if (cp > 0 && cp <= 0x10FFFF) {
@@ -4815,8 +4894,7 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
             if (clip_has_box) {
                 glyph_clipped = glyph_entirely_outside_box(
                     m, glyph_adv, st.wmode, active_ascender, active_descender, current_clip_box);
-            }
-
+            }            
             std::vector<int> unicode_seq;
             if (active_font_map) {
                 auto it = active_font_map->find(code);
@@ -5973,7 +6051,7 @@ std::vector<uint8_t> WinPdfDocument::save_multiple_pages_content_incremental_to_
             size_t pos = new_dict.find(key);
             if (pos != std::string::npos) {
                 size_t end_pos = pos + key.size();
-                while (end_pos < new_dict.size() && std::isspace(new_dict[end_pos])) ++end_pos;
+                while (end_pos < new_dict.size() && std::isspace(static_cast<unsigned char>(new_dict[end_pos]))) ++end_pos;
                 if (end_pos < new_dict.size() && new_dict[end_pos] == '[') {
                     int depth = 0;
                     for (; end_pos < new_dict.size(); ++end_pos) {
@@ -7250,13 +7328,11 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
             final_fallback = &get_zapf_dingbats_mapping();
         }
 
-        if (final_fallback) {
+            if (final_fallback) {
             for (int i = 0; i <= 255; ++i) {
-                if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
-                    auto it_fallback = final_fallback->find(i);
-                    if (it_fallback != final_fallback->end()) {
-                        cmap[i] = {it_fallback->second};
-                    }
+                auto it_fallback = final_fallback->find(i);
+                if (it_fallback != final_fallback->end()) {
+                    cmap[i] = {it_fallback->second};
                 }
             }
         }
@@ -7593,7 +7669,7 @@ WinFontMatrixMap WinPdfDocument::get_page_font_matrix_map(int page_idx) {
             }
 
             char* end_ptr = nullptr;
-            v[i] = std::strtod(p, &end_ptr);
+            v[i] = wz_strtod(p, &end_ptr);
             if (end_ptr == p || end_ptr > end) {
                 return false;
             }
@@ -7763,7 +7839,7 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
             }
 
             char* end_ptr = nullptr;
-            v[i] = std::strtod(p, &end_ptr);
+            v[i] = wz_strtod(p, &end_ptr);
             if (end_ptr == p || end_ptr > end) {
                 return false;
             }
@@ -7794,7 +7870,7 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
         }
 
         char* end_ptr = nullptr;
-        double v = std::strtod(dict.c_str() + pos, &end_ptr);
+        double v = wz_strtod(dict.c_str() + pos, &end_ptr);
         if (end_ptr == dict.c_str() + pos) {
             return fallback;
         }
@@ -7967,7 +8043,6 @@ WinFontVerticalMetricsMap WinPdfDocument::get_page_font_vertical_metrics_map(int
         }
 
         if (got_bounds) {
-            // Expand ascender/descender if glyph bounds are larger (mimic MuPDF fz_calculate_font_ascender_descender)
             if (asc_max > metrics.ascender) metrics.ascender = asc_max;
             if (desc_min < metrics.descender) metrics.descender = desc_min;
         }
@@ -8230,7 +8305,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
             }
 
             char* end_ptr = nullptr;
-            v[i] = std::strtod(p, &end_ptr);
+            v[i] = wz_strtod(p, &end_ptr);
             if (end_ptr == p || end_ptr > end) {
                 return false;
             }
@@ -8264,7 +8339,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
             }
 
             char* end_ptr = nullptr;
-            v[i] = std::strtod(p, &end_ptr);
+            v[i] = wz_strtod(p, &end_ptr);
             if (end_ptr == p || end_ptr > end) {
                 return false;
             }
@@ -8295,7 +8370,7 @@ std::shared_ptr<const WinFormXObjectMap> WinPdfDocument::get_page_form_xobject_m
         }
 
         char* end_ptr = nullptr;
-        double v = std::strtod(dict.c_str() + pos, &end_ptr);
+        double v = wz_strtod(dict.c_str() + pos, &end_ptr);
         if (end_ptr == dict.c_str() + pos) {
             return fallback;
         }
@@ -8561,15 +8636,13 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
             }
 
             if (final_fallback) {
-                for (int i = 0; i <= 255; ++i) {
-                    if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
-                        auto it_fallback = final_fallback->find(i);
-                        if (it_fallback != final_fallback->end()) {
-                            cmap[i] = {it_fallback->second};
-                        }
-                    }
+            for (int i = 0; i <= 255; ++i) {
+                auto it_fallback = final_fallback->find(i);
+                if (it_fallback != final_fallback->end()) {
+                    cmap[i] = {it_fallback->second};
                 }
             }
+        }
 
             if (is_type3_subtype) {
                 apply_type3_ascii_fallback(cmap);
@@ -8788,7 +8861,7 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                             int cid = c0;
                             while (i < tokens.size() && tokens[i] != "]") {
                                 if (tokens[i] != "[") {
-                                    out_widths[cid] = static_cast<float>(std::atof(tokens[i].c_str()) / 1000.0);
+                                    out_widths[cid] = static_cast<float>(wz_strtod(tokens[i].c_str()) / 1000.0);
                                     ++cid;
                                 }
                                 ++i;
@@ -8802,7 +8875,7 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                             }
                             int c1 = std::atoi(tokens[i].c_str());
                             ++i;
-                            float w = static_cast<float>(std::atof(tokens[i].c_str()) / 1000.0);
+                            float w = static_cast<float>(wz_strtod(tokens[i].c_str()) / 1000.0);
                             ++i;
 
                             if (c1 < c0) {
@@ -8857,7 +8930,7 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                                 }
 
                                 char* end_ptr = nullptr;
-                                const double w = std::strtod(p, &end_ptr);
+                                const double w = wz_strtod(p, &end_ptr);
                                 if (end_ptr == p || end_ptr > end) {
                                     break;
                                 }
@@ -8892,7 +8965,7 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                                 }
 
                                 char* end_ptr = nullptr;
-                                const double w = std::strtod(p, &end_ptr);
+                                const double w = wz_strtod(p, &end_ptr);
                                 if (end_ptr == p || end_ptr > end) {
                                     break;
                                 }
@@ -9148,7 +9221,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
         while (pos < dict.size() && std::isspace(static_cast<unsigned char>(dict[pos]))) ++pos;
         if (pos >= dict.size()) return fallback;
         char* end_ptr = nullptr;
-        double v = std::strtod(dict.c_str() + pos, &end_ptr);
+        double v = wz_strtod(dict.c_str() + pos, &end_ptr);
         if (end_ptr == dict.c_str() + pos) {
             return fallback;
         }
@@ -9228,7 +9301,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
         }
 
         char* end_ptr = nullptr;
-        double a = std::strtod(p, &end_ptr);
+        double a = wz_strtod(p, &end_ptr);
         if (end_ptr == p || end_ptr > end || !std::isfinite(a)) {
             return 1.0f;
         }
@@ -9281,7 +9354,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                 int cid = c0;
                 while (i < tokens.size() && tokens[i] != "]") {
                     if (tokens[i] != "[") {
-                        widths[cid] = static_cast<float>(std::atof(tokens[i].c_str()) / 1000.0);
+                        widths[cid] = static_cast<float>(wz_strtod(tokens[i].c_str()) / 1000.0);
                         ++cid;
                     }
                     ++i;
@@ -9295,7 +9368,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                 }
                 int c1 = std::atoi(tokens[i].c_str());
                 ++i;
-                float w = static_cast<float>(std::atof(tokens[i].c_str()) / 1000.0);
+                float w = static_cast<float>(wz_strtod(tokens[i].c_str()) / 1000.0);
                 ++i;
 
                 if (c1 < c0) {
@@ -9414,9 +9487,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                                                  const std::unordered_map<int, std::vector<int>>* code_to_unicode,
                                                  std::unordered_map<int, float>& widths) {
         FT_Library library = get_freetype_library();
-        if (!library) {
-            return;
-        }
+        if (!library) return;
 
         const bool is_type0_subtype = parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0";
         const CidToGidMapData cid_to_gid = load_cid_to_gid_map(font_obj);
@@ -9434,6 +9505,8 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
 
         FT_Face face = nullptr;
         std::vector<uint8_t> font_bytes;
+        
+        bool is_system_font = false; 
 
         if (!descriptor_dict.empty()) {
             int font_file_ref = parse_ref_id_after_key(descriptor_dict, "/FontFile2");
@@ -9444,15 +9517,9 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                 WinPdfObject font_file_obj = read_obj(font_file_ref);
                 if (font_file_obj.is_stream && !font_file_obj.stream.empty()) {
                     font_bytes = decode_stream_data(font_file_obj.stream, font_file_obj.dict, this);
-                    if (font_bytes.empty()) {
-                        font_bytes = font_file_obj.stream;
-                    }
+                    if (font_bytes.empty()) font_bytes = font_file_obj.stream;
                     if (!font_bytes.empty()) {
-                        if (FT_New_Memory_Face(library,
-                                               reinterpret_cast<const FT_Byte*>(font_bytes.data()),
-                                               static_cast<FT_Long>(font_bytes.size()),
-                                               0,
-                                               &face) != 0) {
+                        if (FT_New_Memory_Face(library, reinterpret_cast<const FT_Byte*>(font_bytes.data()), static_cast<FT_Long>(font_bytes.size()), 0, &face) != 0) {
                             face = nullptr;
                         }
                     }
@@ -9464,31 +9531,29 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
             std::vector<std::string> system_candidates = get_system_font_candidates(base_font_name);
             for (const std::string& candidate : system_candidates) {
                 if (FT_New_Face(library, candidate.c_str(), 0, &face) == 0) {
+                    is_system_font = true;
                     break;
                 }
             }
         }
 
-        if (!face) {
+        if (!face) return;
+
+        if (is_system_font) {
+            FT_Done_Face(face);
             return;
         }
 
         FT_Select_Charmap(face, FT_ENCODING_UNICODE);
-
         const float units_per_em = (face->units_per_EM > 0) ? static_cast<float>(face->units_per_EM) : 1000.0f;
 
         auto lookup_gid_for_code = [&](int code) -> FT_UInt {
-            if (code < 0) {
-                return 0;
-            }
-
+            if (code < 0) return 0;
             if (is_type0_subtype) {
                 if (cid_to_gid.has_map) {
                     if (cid_to_gid.identity) {
                         const FT_UInt gid = static_cast<FT_UInt>(code);
-                        if (face->num_glyphs <= 0 || gid < static_cast<FT_UInt>(face->num_glyphs)) {
-                            return gid;
-                        }
+                        if (face->num_glyphs <= 0 || gid < static_cast<FT_UInt>(face->num_glyphs)) return gid;
                         return 0;
                     }
                     if (static_cast<size_t>(code) < cid_to_gid.values.size()) {
@@ -9499,61 +9564,36 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
             }
 
             FT_UInt gid = FT_Get_Char_Index(face, static_cast<FT_ULong>(code));
-            if (gid != 0) {
-                return gid;
-            }
+            if (gid != 0) return gid;
 
             FT_CharMap saved_charmap = face->charmap;
             if (face->num_charmaps > 0 && face->charmaps != nullptr) {
                 for (int ci = 0; ci < face->num_charmaps; ++ci) {
                     FT_CharMap cmap = face->charmaps[ci];
-                    if (cmap == nullptr || cmap == face->charmap) {
-                        continue;
-                    }
-                    if (FT_Set_Charmap(face, cmap) != 0) {
-                        continue;
-                    }
+                    if (cmap == nullptr || cmap == face->charmap) continue;
+                    if (FT_Set_Charmap(face, cmap) != 0) continue;
                     gid = FT_Get_Char_Index(face, static_cast<FT_ULong>(code));
-                    if (gid != 0) {
-                        break;
-                    }
+                    if (gid != 0) break;
                 }
             }
-
             if (saved_charmap != nullptr && face->charmap != saved_charmap) {
                 FT_Set_Charmap(face, saved_charmap);
             }
-
             return gid;
         };
 
         if (code_to_unicode) {
             for (const auto& cu : *code_to_unicode) {
                 const int code = cu.first;
-                if (code < 0 || widths.find(code) != widths.end()) {
-                    continue;
-                }
-
-                if (cu.second.empty()) {
-                    continue;
-                }
+                if (code < 0 || widths.find(code) != widths.end()) continue;
+                if (cu.second.empty()) continue;
 
                 FT_UInt glyph_index = 0;
-                if (is_type0_subtype) {
-                    glyph_index = lookup_gid_for_code(code);
-                }
-                if (glyph_index == 0) {
-                    glyph_index = FT_Get_Char_Index(face, static_cast<FT_ULong>(cu.second.front()));
-                }
-                if (glyph_index == 0) {
-                    continue;
-                }
-                if (face->num_glyphs > 0 && glyph_index >= static_cast<FT_UInt>(face->num_glyphs)) {
-                    continue;
-                }
-                if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) {
-                    continue;
-                }
+                if (is_type0_subtype) glyph_index = lookup_gid_for_code(code);
+                if (glyph_index == 0) glyph_index = FT_Get_Char_Index(face, static_cast<FT_ULong>(cu.second.front()));
+                if (glyph_index == 0) continue;
+                if (face->num_glyphs > 0 && glyph_index >= static_cast<FT_UInt>(face->num_glyphs)) continue;
+                if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) continue;
 
                 widths[code] = static_cast<float>(face->glyph->metrics.horiAdvance) / units_per_em;
             }
@@ -9564,37 +9604,24 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
             max_code = 65535;
             if (cid_to_gid.has_map && !cid_to_gid.identity && !cid_to_gid.values.empty()) {
                 const size_t capped_size = (std::min)(cid_to_gid.values.size(), static_cast<size_t>(65536));
-                if (capped_size > 0) {
-                    max_code = static_cast<int>(capped_size - 1);
-                }
+                if (capped_size > 0) max_code = static_cast<int>(capped_size - 1);
             }
         }
 
         for (int code = 0; code <= max_code; ++code) {
-            if (widths.find(code) != widths.end()) {
-                continue;
-            }
+            if (widths.find(code) != widths.end()) continue;
 
             FT_UInt glyph_index = lookup_gid_for_code(code);
             if (code_to_unicode) {
                 auto u = code_to_unicode->find(code);
                 if (u != code_to_unicode->end() && !u->second.empty()) {
                     FT_UInt from_unicode = FT_Get_Char_Index(face, static_cast<FT_ULong>(u->second.front()));
-                    if (glyph_index == 0 && from_unicode != 0) {
-                        glyph_index = from_unicode;
-                    }
+                    if (glyph_index == 0 && from_unicode != 0) glyph_index = from_unicode;
                 }
             }
-            if (glyph_index == 0) {
-                continue;
-            }
-            if (face->num_glyphs > 0 && glyph_index >= static_cast<FT_UInt>(face->num_glyphs)) {
-                continue;
-            }
-
-            if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) {
-                continue;
-            }
+            if (glyph_index == 0) continue;
+            if (face->num_glyphs > 0 && glyph_index >= static_cast<FT_UInt>(face->num_glyphs)) continue;
+            if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) continue;
 
             widths[code] = static_cast<float>(face->glyph->metrics.horiAdvance) / units_per_em;
         }
@@ -9725,7 +9752,7 @@ WinFontWidthMap WinPdfDocument::get_page_font_width_map(int page_idx) {
                             }
 
                             char* end_ptr = nullptr;
-                            const double w = std::strtod(p, &end_ptr);
+                            const double w = wz_strtod(p, &end_ptr);
                             if (end_ptr == p || end_ptr > end) {
                                 break;
                             }
@@ -9905,7 +9932,7 @@ WinPageGeometry WinPdfDocument::get_page_geometry(int page_idx) {
             }
 
             char* end_ptr = nullptr;
-            const double d = std::strtod(p, &end_ptr);
+            const double d = wz_strtod(p, &end_ptr);
             if (end_ptr == p || end_ptr > end) {
                 return false;
             }
@@ -11051,9 +11078,26 @@ bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
         apply_differences_to_map(encoding_dict, dummy, &diff_names);
     }
 
+    
+    // 1. Type0 font safety identification
+    bool is_type0_subtype = (parse_name_value_after_key(font_obj.dict, "/Subtype") == "Type0") ||
+                            (font_obj.dict.find("/Subtype /Type0") != std::string::npos) ||
+                            (font_obj.dict.find("/Subtype/Type0") != std::string::npos);
+
     std::string base_font = parse_name_value_after_key(font_obj.dict, "/BaseFont");
-    std::string base_font_lower = base_font;
-    std::transform(base_font_lower.begin(), base_font_lower.end(), base_font_lower.begin(), [](unsigned char c){ return std::tolower(c); });
+    
+    // 2. If it is Type0 and lacks a name, must access DescendantFonts to extract the name.
+    if (base_font.empty() && is_type0_subtype) {
+        std::vector<int> descendant_ids = parse_ref_array_after_key(font_obj.dict, "/DescendantFonts");
+        if (!descendant_ids.empty()) {
+            WinPdfObject cid_font_obj = read_obj(descendant_ids.front());
+            base_font = parse_name_value_after_key(cid_font_obj.dict, "/BaseFont");
+        }
+    }
+
+    // 3. Use `normalize_pdf_font_name` to trim the excess part (e.g., ABCDEF+CMMI10 -> CMMI10).
+    std::string base_font_lower = to_lower_ascii(normalize_pdf_font_name(base_font));
+
 
     const std::unordered_map<int, int>* fallback_mapping = nullptr;
     if (base_font_lower.find("cmmi") != std::string::npos) {
@@ -11068,11 +11112,9 @@ bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
 
     if (fallback_mapping) {
         for (int i = 0; i <= 255; ++i) {
-            if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] == 0xFFFD) {
-                auto it_fallback = fallback_mapping->find(i);
-                if (it_fallback != fallback_mapping->end()) {
-                    cmap[i] = {it_fallback->second};
-                }
+            auto it_fallback = fallback_mapping->find(i);
+            if (it_fallback != fallback_mapping->end()) {
+                cmap[i] = {it_fallback->second};
             }
         }
     }

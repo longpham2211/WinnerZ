@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstdint>
@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 #if defined(__has_include)
 #if __has_include(<pybind11/pybind11.h>) && __has_include(<pybind11/stl.h>)
@@ -236,19 +237,19 @@ static std::array<float, 4> QuadToBBox(const WinExtract::Quad& quad) {
     return {x0, y0, x1, y1};
 }
 
-struct fz_matrix {
+struct wz_matrix {
     float a, b, c, d, e, f;
 };
 
-static fz_matrix fz_scale(float sx, float sy) {
+static wz_matrix wz_scale(float sx, float sy) {
     return {sx, 0, 0, sy, 0, 0};
 }
 
-static fz_matrix fz_pre_rotate(fz_matrix m, float degrees) {
+static wz_matrix wz_pre_rotate(wz_matrix m, float degrees) {
     float angle = degrees * 3.14159265358979323846f / 180.0f;
     float s = std::sin(angle);
     float c = std::cos(angle);
-    fz_matrix r = {c, s, -s, c, 0, 0};
+    wz_matrix r = {c, s, -s, c, 0, 0};
     return {
         r.a * m.a + r.b * m.c,
         r.a * m.b + r.b * m.d,
@@ -259,11 +260,11 @@ static fz_matrix fz_pre_rotate(fz_matrix m, float degrees) {
     };
 }
 
-static fz_matrix fz_translate(float tx, float ty) {
+static wz_matrix wz_translate(float tx, float ty) {
     return {1, 0, 0, 1, tx, ty};
 }
 
-static fz_matrix fz_concat(fz_matrix left, fz_matrix right) {
+static wz_matrix wz_concat(wz_matrix left, wz_matrix right) {
     return {
         left.a * right.a + left.b * right.c,
         left.a * right.b + left.b * right.d,
@@ -274,7 +275,7 @@ static fz_matrix fz_concat(fz_matrix left, fz_matrix right) {
     };
 }
 
-static std::array<float, 4> fz_transform_rect(const std::array<float, 4>& r, fz_matrix m) {
+static std::array<float, 4> wz_transform_rect(const std::array<float, 4>& r, wz_matrix m) {
     float x0 = r[0], y0 = r[1], x1 = r[2], y1 = r[3];
     float t_x0 = x0 * m.a + y0 * m.c + m.e;
     float t_y0 = x0 * m.b + y0 * m.d + m.f;
@@ -292,14 +293,14 @@ static std::array<float, 4> fz_transform_rect(const std::array<float, 4>& r, fz_
     return {nx0, ny0, nx1, ny1};
 }
 
-static std::array<float, 2> fz_transform_point(float x, float y, fz_matrix m) {
+static std::array<float, 2> wz_transform_point(float x, float y, wz_matrix m) {
     return {
         x * m.a + y * m.c + m.e,
         x * m.b + y * m.d + m.f
     };
 }
 
-static std::array<float, 4> fz_intersect_rect(const std::array<float, 4>& a, const std::array<float, 4>& b) {
+static std::array<float, 4> wz_intersect_rect(const std::array<float, 4>& a, const std::array<float, 4>& b) {
     float x0 = std::max(a[0], b[0]);
     float y0 = std::max(a[1], b[1]);
     float x1 = std::min(a[2], b[2]);
@@ -308,7 +309,7 @@ static std::array<float, 4> fz_intersect_rect(const std::array<float, 4>& a, con
     return {x0, y0, x1, y1};
 }
 
-static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
+static wz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
     float userunit = 1.0f;
     
     std::array<float, 4> mediabox = {geo.mediabox.x0, geo.mediabox.y0, geo.mediabox.x1, geo.mediabox.y1};
@@ -320,16 +321,16 @@ static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
     rotate = 90 * ((rotate + 45) / 90);
     if (rotate >= 360) rotate = 0;
 
-    fz_matrix page_ctm = fz_scale(userunit, -userunit);
-    page_ctm = fz_pre_rotate(page_ctm, -static_cast<float>(rotate));
+    wz_matrix page_ctm = wz_scale(userunit, -userunit);
+    page_ctm = wz_pre_rotate(page_ctm, -static_cast<float>(rotate));
 
-    cropbox = fz_intersect_rect(cropbox, mediabox);
+    cropbox = wz_intersect_rect(cropbox, mediabox);
     if (cropbox[2] - cropbox[0] < 1 || cropbox[3] - cropbox[1] < 1) {
         cropbox = {0, 0, 1, 1};
     }
 
-    std::array<float, 4> trans_cropbox = fz_transform_rect(cropbox, page_ctm);
-    page_ctm = fz_concat(page_ctm, fz_translate(-trans_cropbox[0], -trans_cropbox[1]));
+    std::array<float, 4> trans_cropbox = wz_transform_rect(cropbox, page_ctm);
+    page_ctm = wz_concat(page_ctm, wz_translate(-trans_cropbox[0], -trans_cropbox[1]));
     
     return page_ctm;
 }
@@ -343,9 +344,10 @@ struct SpanCompat {
     bool is_bold = false;
     bool is_italic = false;
     bool is_serif = false;
+    int bidi = 0;
     bool is_mono = false;
     bool is_synthetic = false;
-    bool split_leading_spaces = false;
+    bool split_leading_spaces = false; // need to delete?
     int wmode = 0;
     WinExtract::Rect bbox{0, 0, 0, 0};
     std::vector<const WinExtract::WinChar*> chars;
@@ -369,32 +371,85 @@ static void MergeRect(WinExtract::Rect& dst, const WinExtract::Rect& src, bool& 
     dst.y1 = std::max(dst.y1, src.y1);
 }
 
+// Hàm Xóa Văn Bản Trùng Lặp (Loại bỏ Hidden/OCR text đè lên visible text)
+static void RemoveDuplicateText(WinExtract::WinPage& page) {
+    struct CharNode {
+        const WinExtract::WinChar* ch;
+        float x, y, size;
+    };
+    std::vector<CharNode> nodes;
+    
+    for (auto& block : page.blocks) {
+        if (block.type != WinExtract::BlockType::TEXT) continue;
+        for (auto& line : block.lines) {
+            for (auto& ch : line.chars) {
+                if (ch.c == ' ' || ch.is_synthetic) continue;
+                nodes.push_back({&ch, ch.origin.x, ch.origin.y, ch.size});
+            }
+        }
+    }
+
+    std::unordered_set<const WinExtract::WinChar*> duplicates;
+    
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (duplicates.count(nodes[i].ch)) continue;
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            if (duplicates.count(nodes[j].ch)) continue;
+            if (nodes[i].ch->c != nodes[j].ch->c) continue;
+            
+            float dx = nodes[i].x - nodes[j].x;
+            float dy = nodes[i].y - nodes[j].y;
+            
+            // Xóa chữ nếu trùng khớp tới 10% size
+            if (std::abs(dx) < nodes[i].size * 0.1f && std::abs(dy) < nodes[i].size * 0.1f) {
+                duplicates.insert(nodes[j].ch);
+            }
+        }
+    }
+    
+    if (duplicates.empty()) return;
+    
+    for (auto& block : page.blocks) {
+        if (block.type != WinExtract::BlockType::TEXT) continue;
+        for (auto& line : block.lines) {
+            line.chars.erase(std::remove_if(line.chars.begin(), line.chars.end(), [&](const WinExtract::WinChar& ch) {
+                return duplicates.count(&ch) > 0;
+            }), line.chars.end());
+        }
+        
+        // Xóa những dòng trống hoặc chỉ còn mỗi khoảng trắng thừa
+        block.lines.erase(std::remove_if(block.lines.begin(), block.lines.end(), [](const WinExtract::WinLine& l) {
+            for (const auto& ch : l.chars) {
+                if (ch.c != ' ' && !ch.is_synthetic) return false;
+            }
+            return true;
+        }), block.lines.end());
+    }
+    
+    // Xóa những block trống
+    page.blocks.erase(std::remove_if(page.blocks.begin(), page.blocks.end(), [](const WinExtract::WinBlock& b) {
+        return b.type == WinExtract::BlockType::TEXT && b.lines.empty();
+    }), page.blocks.end());
+}
+
+
 static std::vector<SpanCompat> BuildLineSpans(const WinExtract::WinLine& line) {
     std::vector<SpanCompat> spans;
     spans.reserve(line.chars.size());
 
     for (const auto& ch : line.chars) {
+        // Chỉ tách Span khi Style, hướng chữ, hoặc cờ synthetic thay đổi
         bool new_span = spans.empty() ||
-                        spans.back().font_name != ch.font_name ||
-                        std::abs(spans.back().font_size - ch.size) > 0.01f ||
-                        spans.back().color != ch.color ||
-                        spans.back().is_bold != ch.is_bold ||
-                        spans.back().is_italic != ch.is_italic ||
-                        spans.back().is_serif != ch.is_serif ||
-                        spans.back().is_mono != ch.is_mono ||
-                        spans.back().is_synthetic != ch.is_synthetic ||
-                        spans.back().wmode != line.wmode;
-
-        if (!new_span && !spans.empty()) {
-            const SpanCompat& prev_span = spans.back();
-            if (prev_span.split_leading_spaces &&
-                prev_span.chars.size() == 1 &&
-                prev_span.chars.front() != nullptr &&
-                prev_span.chars.front()->c == ' ' &&
-                ch.c != ' ') {
-                new_span = true;
-            }
-        }
+                spans.back().font_name != ch.font_name ||
+                std::abs(spans.back().font_size - ch.size) > 0.01f ||
+                spans.back().color != ch.color ||
+                spans.back().is_bold != ch.is_bold ||
+                spans.back().is_italic != ch.is_italic ||
+                spans.back().is_serif != ch.is_serif ||
+                spans.back().is_mono != ch.is_mono ||
+                spans.back().bidi != ch.bidi ||
+                spans.back().wmode != line.wmode ||
+                spans.back().is_synthetic != ch.is_synthetic;
 
         if (new_span) {
             SpanCompat span;
@@ -405,44 +460,10 @@ static std::vector<SpanCompat> BuildLineSpans(const WinExtract::WinLine& line) {
             span.is_italic = ch.is_italic;
             span.is_serif = ch.is_serif;
             span.is_mono = ch.is_mono;
-            span.is_synthetic = ch.is_synthetic;
+            span.is_synthetic = ch.is_synthetic; 
             span.ascender = ch.ascender;
             span.descender = ch.descender;
-            bool split_leading_space = false;
-            if (!spans.empty() && ch.c == ' ' && spans.size() == 1) {
-                const SpanCompat& prev_span = spans.back();
-                auto is_ascii_digit = [](int c) {
-                    return c >= '0' && c <= '9';
-                };
-                auto is_ascii_alpha = [](int c) {
-                    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-                };
-
-                bool all_digits = !prev_span.chars.empty();
-                bool single_alpha = (prev_span.chars.size() == 1);
-
-                for (const WinExtract::WinChar* prev_ch : prev_span.chars) {
-                    if (prev_ch == nullptr) {
-                        all_digits = false;
-                        single_alpha = false;
-                        break;
-                    }
-
-                    if (!is_ascii_digit(prev_ch->c)) {
-                        all_digits = false;
-                    }
-                }
-
-                if (single_alpha) {
-                    const WinExtract::WinChar* prev_ch = prev_span.chars.front();
-                    single_alpha = prev_ch != nullptr && is_ascii_alpha(prev_ch->c);
-                }
-
-                if (all_digits || single_alpha) {
-                    split_leading_space = true;
-                }
-            }
-            span.split_leading_spaces = split_leading_space;
+            span.bidi = ch.bidi; 
             span.wmode = line.wmode;
             spans.push_back(std::move(span));
         }
@@ -450,10 +471,6 @@ static std::vector<SpanCompat> BuildLineSpans(const WinExtract::WinLine& line) {
         SpanCompat& span = spans.back();
         span.chars.push_back(&ch);
 
-        bool has_bbox = false;
-        if (!span.chars.empty()) {
-            has_bbox = span.chars.size() > 1;
-        }
         const WinExtract::Rect cb = CharBBox(ch);
         if (span.chars.size() == 1) {
             span.bbox = cb;
@@ -463,7 +480,6 @@ static std::vector<SpanCompat> BuildLineSpans(const WinExtract::WinLine& line) {
             span.bbox.x1 = std::max(span.bbox.x1, cb.x1);
             span.bbox.y1 = std::max(span.bbox.y1, cb.y1);
         }
-        (void)has_bbox;
     }
 
     return spans;
@@ -539,8 +555,6 @@ static void ValidatePageIndex(const std::shared_ptr<WinExtract::WinPdfDocument>&
     }
 }
 
-
-
 static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDocument>& doc, int page_index, bool sort_output = false) {
     ValidatePageIndex(doc, page_index);
 
@@ -557,6 +571,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     WinExtract::WinPageGeometry geo = doc->get_page_geometry(page_index);
 
     WinExtract::WinTextExtractor dev;
+    dev.collect_styles = true; 
     dev.begin_page(geo.mediabox.x1 - geo.mediabox.x0, geo.mediabox.y1 - geo.mediabox.y0);
 
     WinExtract::WinPdfInterpreter::run(
@@ -584,6 +599,10 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
 
     ExtractedPage extracted;
     extracted.page = dev.finish_page();
+    
+    // Xóa bỏ toàn bộ lớp chữ ẩn trùng lặp
+    RemoveDuplicateText(extracted.page);
+    
     extracted.geo = geo;
 
     return extracted;
@@ -592,25 +611,20 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
 static std::array<float, 4> LoadPageRect(const std::shared_ptr<WinExtract::WinPdfDocument>& doc, int page_index) {
     ValidatePageIndex(doc, page_index);
     const WinExtract::WinPageGeometry geo = doc->get_page_geometry(page_index);
-    fz_matrix ctm = ComputePageCTM(geo);
+    wz_matrix ctm = ComputePageCTM(geo);
     std::array<float, 4> crop_arr = {geo.cropbox.x0, geo.cropbox.y0, geo.cropbox.x1, geo.cropbox.y1};
-    std::array<float, 4> bbox = fz_transform_rect(crop_arr, ctm);
+    std::array<float, 4> bbox = wz_transform_rect(crop_arr, ctm);
     const float width = std::max(0.0f, bbox[2] - bbox[0]);
     const float height = std::max(0.0f, bbox[3] - bbox[1]);
     return {0.0f, 0.0f, width, height};
 }
 
-
-
-
-
-
 #include <Python.h>
 
 static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, bool include_chars, bool sort_output) {
-    fz_matrix ctm = ComputePageCTM(extracted.geo);
+    wz_matrix ctm = ComputePageCTM(extracted.geo);
     std::array<float, 4> crop_arr = {extracted.geo.cropbox.x0, extracted.geo.cropbox.y0, extracted.geo.cropbox.x1, extracted.geo.cropbox.y1};
-    std::array<float, 4> page_bbox = fz_transform_rect(crop_arr, ctm);
+    std::array<float, 4> page_bbox = wz_transform_rect(crop_arr, ctm);
 
     const float width = std::max(0.0f, page_bbox[2] - page_bbox[0]);
     const float height = std::max(0.0f, page_bbox[3] - page_bbox[1]);
@@ -624,13 +638,21 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
     for (const auto& block : extracted.page.blocks) {
         sorted_blocks.push_back(&block);
     }
+
     if (sort_output) {
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
-            auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-            auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-            if (ab[3] != bb[3]) return ab[3] < bb[3];
-            if (ab[0] != bb[0]) return ab[0] < bb[0];
-            return false;
+            auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+            
+            // Làm tròn tọa độ Y xuống bội số của 2.0 để gom dòng chính xác tuyệt đối
+            auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+            float y_a = quantize_y(ab[3]);
+            float y_b = quantize_y(bb[3]);
+
+            if (y_a != y_b) {
+                return y_a < y_b;
+            }
+            return ab[0] < bb[0];
         });
     }
 
@@ -640,18 +662,18 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
         json block_dict;
         block_dict["type"] = block.type == WinExtract::BlockType::TEXT ? 0 : 1;
 
-        const auto block_bbox = fz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
+        const auto block_bbox = wz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
         block_dict["bbox"] = {block_bbox[0], block_bbox[1], block_bbox[2], block_bbox[3]};
 
         json lines_list = json::array();
         for (const auto& line : block.lines) {
             json line_dict;
-            const auto line_bbox = fz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
+            const auto line_bbox = wz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
             line_dict["bbox"] = {line_bbox[0], line_bbox[1], line_bbox[2], line_bbox[3]};
             line_dict["wmode"] = line.wmode;
 
-            std::array<float, 2> t_dir = fz_transform_point(line.dir.x, line.dir.y, ctm);
-            std::array<float, 2> t_orig = fz_transform_point(0, 0, ctm);
+            std::array<float, 2> t_dir = wz_transform_point(line.dir.x, line.dir.y, ctm);
+            std::array<float, 2> t_orig = wz_transform_point(0, 0, ctm);
             line_dict["dir"] = {t_dir[0] - t_orig[0], t_dir[1] - t_orig[1]};
 
             const auto spans = BuildLineSpans(line);
@@ -660,14 +682,14 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
                 json span_dict;
                 span_dict["text"] = SpanText(span);
 
-                const auto span_bbox = fz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
+                const auto span_bbox = wz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
                 span_dict["bbox"] = {span_bbox[0], span_bbox[1], span_bbox[2], span_bbox[3]};
 
                 std::array<float, 2> origin;
                 if (!span.chars.empty()) {
-                    origin = fz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
+                    origin = wz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
                 } else {
-                    origin = fz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
+                    origin = wz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
                 }
                 span_dict["origin"] = {origin[0], origin[1]};
 
@@ -688,11 +710,11 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
                         ch_dict["c"] = Utf8FromCodepoint(ch->c);
                         ch_dict["u"] = ch->c;
                         
-                        const auto ch_origin = fz_transform_point(ch->origin.x, ch->origin.y, ctm);
+                        const auto ch_origin = wz_transform_point(ch->origin.x, ch->origin.y, ctm);
                         ch_dict["origin"] = {ch_origin[0], ch_origin[1]};
                         
                         const auto q = QuadToBBox(ch->quad);
-                        const auto bbox = fz_transform_rect(q, ctm);
+                        const auto bbox = wz_transform_rect(q, ctm);
                         ch_dict["bbox"] = {bbox[0], bbox[1], bbox[2], bbox[3]};
                         ch_dict["bidi"] = ch->bidi;
                         ch_dict["wmode"] = span.wmode;
@@ -715,9 +737,9 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
 }
 
 static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index, bool include_chars, bool sort_output) {
-    fz_matrix ctm = ComputePageCTM(extracted.geo);
+    wz_matrix ctm = ComputePageCTM(extracted.geo);
     std::array<float, 4> crop_arr = {extracted.geo.cropbox.x0, extracted.geo.cropbox.y0, extracted.geo.cropbox.x1, extracted.geo.cropbox.y1};
-    std::array<float, 4> page_bbox = fz_transform_rect(crop_arr, ctm);
+    std::array<float, 4> page_bbox = wz_transform_rect(crop_arr, ctm);
 
     const float width = std::max(0.0f, page_bbox[2] - page_bbox[0]);
     const float height = std::max(0.0f, page_bbox[3] - page_bbox[1]);
@@ -742,11 +764,18 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
     }
     if (sort_output) {
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
-            auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-            auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-            if (ab[3] != bb[3]) return ab[3] < bb[3];
-            if (ab[0] != bb[0]) return ab[0] < bb[0];
-            return false;
+            auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+            
+            // Làm tròn tọa độ Y xuống bội số của 2.0 để gom dòng chính xác tuyệt đối
+            auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+            float y_a = quantize_y(ab[3]);
+            float y_b = quantize_y(bb[3]);
+
+            if (y_a != y_b) {
+                return y_a < y_b;
+            }
+            return ab[0] < bb[0];
         });
     }
 
@@ -759,7 +788,7 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
         PyDict_SetItemString(block_dict, "type", type_val);
         Py_DECREF(type_val);
 
-        const auto block_bbox = fz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
+        const auto block_bbox = wz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
         PyObject* bbox_tuple = PyTuple_New(4);
         PyTuple_SET_ITEM(bbox_tuple, 0, PyFloat_FromDouble(block_bbox[0]));
         PyTuple_SET_ITEM(bbox_tuple, 1, PyFloat_FromDouble(block_bbox[1]));
@@ -773,7 +802,7 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
             const auto& line = block.lines[l_idx];
             PyObject* line_dict = PyDict_New();
             
-            const auto line_bbox = fz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
+            const auto line_bbox = wz_transform_rect({line.bbox.x0, line.bbox.y0, line.bbox.x1, line.bbox.y1}, ctm);
             PyObject* l_bbox_tuple = PyTuple_New(4);
             PyTuple_SET_ITEM(l_bbox_tuple, 0, PyFloat_FromDouble(line_bbox[0]));
             PyTuple_SET_ITEM(l_bbox_tuple, 1, PyFloat_FromDouble(line_bbox[1]));
@@ -786,8 +815,8 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
             PyDict_SetItemString(line_dict, "wmode", wmode_val);
             Py_DECREF(wmode_val);
 
-            std::array<float, 2> t_dir = fz_transform_point(line.dir.x, line.dir.y, ctm);
-            std::array<float, 2> t_orig = fz_transform_point(0, 0, ctm);
+            std::array<float, 2> t_dir = wz_transform_point(line.dir.x, line.dir.y, ctm);
+            std::array<float, 2> t_orig = wz_transform_point(0, 0, ctm);
             PyObject* dir_tuple = PyTuple_New(2);
             PyTuple_SET_ITEM(dir_tuple, 0, PyFloat_FromDouble(t_dir[0] - t_orig[0]));
             PyTuple_SET_ITEM(dir_tuple, 1, PyFloat_FromDouble(t_dir[1] - t_orig[1]));
@@ -805,7 +834,7 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
                 PyDict_SetItemString(span_dict, "text", text_val);
                 Py_DECREF(text_val);
 
-                const auto span_bbox = fz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
+                const auto span_bbox = wz_transform_rect({span.bbox.x0, span.bbox.y0, span.bbox.x1, span.bbox.y1}, ctm);
                 PyObject* s_bbox_tuple = PyTuple_New(4);
                 PyTuple_SET_ITEM(s_bbox_tuple, 0, PyFloat_FromDouble(span_bbox[0]));
                 PyTuple_SET_ITEM(s_bbox_tuple, 1, PyFloat_FromDouble(span_bbox[1]));
@@ -816,9 +845,9 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
 
                 std::array<float, 2> origin;
                 if (!span.chars.empty()) {
-                    origin = fz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
+                    origin = wz_transform_point(span.chars.front()->origin.x, span.chars.front()->origin.y, ctm);
                 } else {
-                    origin = fz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
+                    origin = wz_transform_point(span.bbox.x0, span.bbox.y0, ctm);
                 }
                 PyObject* origin_tuple = PyTuple_New(2);
                 PyTuple_SET_ITEM(origin_tuple, 0, PyFloat_FromDouble(origin[0]));
@@ -871,7 +900,7 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
                         PyDict_SetItemString(ch_dict, "u", u_val);
                         Py_DECREF(u_val);
 
-                        const auto ch_origin = fz_transform_point(ch->origin.x, ch->origin.y, ctm);
+                        const auto ch_origin = wz_transform_point(ch->origin.x, ch->origin.y, ctm);
                         PyObject* ch_origin_tup = PyTuple_New(2);
                         PyTuple_SET_ITEM(ch_origin_tup, 0, PyFloat_FromDouble(ch_origin[0]));
                         PyTuple_SET_ITEM(ch_origin_tup, 1, PyFloat_FromDouble(ch_origin[1]));
@@ -879,7 +908,7 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
                         Py_DECREF(ch_origin_tup);
 
                         const auto q = QuadToBBox(ch->quad);
-                        const auto bbox = fz_transform_rect(q, ctm);
+                        const auto bbox = wz_transform_rect(q, ctm);
                         PyObject* ch_bbox_tup = PyTuple_New(4);
                         PyTuple_SET_ITEM(ch_bbox_tup, 0, PyFloat_FromDouble(bbox[0]));
                         PyTuple_SET_ITEM(ch_bbox_tup, 1, PyFloat_FromDouble(bbox[1]));
@@ -926,7 +955,7 @@ static py::object DictToRawPyDict(const ExtractedPage& extracted, int page_index
 }
 
 static py::object BlocksToRawPyList(const ExtractedPage& extracted, bool sort_output) {
-    fz_matrix ctm = ComputePageCTM(extracted.geo);
+    wz_matrix ctm = ComputePageCTM(extracted.geo);
     struct BlockView {
         const WinExtract::WinBlock* block;
         size_t index;
@@ -940,11 +969,17 @@ static py::object BlocksToRawPyList(const ExtractedPage& extracted, bool sort_ou
 
     if (sort_output) {
         std::stable_sort(blocks.begin(), blocks.end(), [&ctm](const BlockView& a, const BlockView& b) {
-            auto ab = fz_transform_rect({a.block->bbox.x0, a.block->bbox.y0, a.block->bbox.x1, a.block->bbox.y1}, ctm);
-            auto bb = fz_transform_rect({b.block->bbox.x0, b.block->bbox.y0, b.block->bbox.x1, b.block->bbox.y1}, ctm);
-            if (std::abs(ab[3] - bb[3]) > 0.01f) return ab[3] > bb[3];
-            if (std::abs(ab[0] - bb[0]) > 0.01f) return ab[0] < bb[0];
-            return ab[1] > bb[1];
+            auto ab = wz_transform_rect({a.block->bbox.x0, a.block->bbox.y0, a.block->bbox.x1, a.block->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({b.block->bbox.x0, b.block->bbox.y0, b.block->bbox.x1, b.block->bbox.y1}, ctm);
+            
+            auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+            float y_a = quantize_y(ab[3]);
+            float y_b = quantize_y(bb[3]);
+
+            if (y_a != y_b) {
+                return y_a < y_b;
+            }
+            return ab[0] < bb[0]; 
         });
     }
 
@@ -957,16 +992,8 @@ static py::object BlocksToRawPyList(const ExtractedPage& extracted, bool sort_ou
         for (const auto& line : block.lines) {
             lines.push_back(&line);
         }
-
-        if (sort_output) {
-            std::stable_sort(lines.begin(), lines.end(), [&ctm](const WinExtract::WinLine* a, const WinExtract::WinLine* b) {
-                auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-                auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-                if (std::abs(ab[3] - bb[3]) > 0.01f) return ab[3] > bb[3];
-                if (std::abs(ab[0] - bb[0]) > 0.01f) return ab[0] < bb[0];
-                return ab[1] > bb[1];
-            });
-        }
+        
+        // TUYỆT ĐỐI KHÔNG sort Lines ở đây nữa.
 
         std::string block_text;
         for (const auto* line : lines) {
@@ -981,8 +1008,9 @@ static py::object BlocksToRawPyList(const ExtractedPage& extracted, bool sort_ou
             block_text += "\n";
         }
 
+        // ... (phần code tạo Dict bên dưới giữ nguyên) ...
         PyObject* block_dict = PyDict_New();
-        const auto block_bbox = fz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
+        const auto block_bbox = wz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
         
         PyObject* bbox_tuple = PyTuple_New(4);
         PyTuple_SET_ITEM(bbox_tuple, 0, PyFloat_FromDouble(block_bbox[0]));
@@ -1015,51 +1043,52 @@ static std::string ExtractTextPlain(const std::shared_ptr<WinExtract::WinPdfDocu
     std::string text_out;
     text_out.reserve(8192);
 
-    fz_matrix ctm = ComputePageCTM(extracted.geo);
+    wz_matrix ctm = ComputePageCTM(extracted.geo);
 
     std::vector<const WinExtract::WinBlock*> sorted_blocks;
     for (const auto& block : extracted.page.blocks) {
         sorted_blocks.push_back(&block);
     }
+    
+    // Sort các Blocks (chỉ sort Blocks, KHÔNG sort Lines)
     if (sort_output) {
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
-            auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-            auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-            if (ab[3] != bb[3]) return ab[3] < bb[3];
-            if (ab[0] != bb[0]) return ab[0] < bb[0];
-            return false;
+            auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
+            auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
+            
+            auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+            float y_a = quantize_y(ab[3]);
+            float y_b = quantize_y(bb[3]);
+
+            if (y_a != y_b) {
+                return y_a < y_b;
+            }
+            return ab[0] < bb[0]; 
         });
     }
 
-    for (const auto* block_ptr : sorted_blocks) {
-        const auto& block = *block_ptr;
+    for (size_t b_idx = 0; b_idx < sorted_blocks.size(); ++b_idx) {
+        const auto& block = *sorted_blocks[b_idx];
         if (block.type != WinExtract::BlockType::TEXT) continue;
         
-        std::vector<const WinExtract::WinLine*> lines;
-        for (const auto& line : block.lines) lines.push_back(&line);
-        
-        if (sort_output) {
-            std::stable_sort(lines.begin(), lines.end(), [&ctm](const WinExtract::WinLine* a, const WinExtract::WinLine* b) {
-                auto ab = fz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
-                auto bb = fz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-                if (ab[3] != bb[3]) return ab[3] < bb[3];
-                if (ab[0] != bb[0]) return ab[0] < bb[0];
-                return false;
-            });
-        }
-
-        for (size_t l_idx = 0; l_idx < lines.size(); ++l_idx) {
-            const auto* line = lines[l_idx];
-            for (size_t c_idx = 0; c_idx < line->chars.size(); ++c_idx) {
-                const auto& ch = line->chars[c_idx];
-                if (line->joined && c_idx == line->chars.size() - 1 && ch.c == '-') {
+        // TUYỆT ĐỐI KHÔNG sort lại Lines. Giữ nguyên thứ tự logic lõi đã build.
+        for (size_t l_idx = 0; l_idx < block.lines.size(); ++l_idx) {
+            const auto& line = block.lines[l_idx];
+            for (size_t c_idx = 0; c_idx < line.chars.size(); ++c_idx) {
+                const auto& ch = line.chars[c_idx];
+                if (line.joined && c_idx == line.chars.size() - 1 && ch.c == '-') {
                     continue;
                 }
                 AppendUtf8Codepoint(text_out, ch.c);
             }
-            if (!line->joined) {
+            
+            if (l_idx < block.lines.size() - 1 && !line.joined) {
                 text_out += "\n";
             }
+        }
+        
+        if (b_idx < sorted_blocks.size() - 1) {
+            text_out += "\n";
         }
     }
     return text_out;
@@ -1591,7 +1620,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                                      zones.push_back(zone);
                                  }
 
-                                 fz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
+                                 wz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
                                  float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
                                  std::map<int, std::vector<uint8_t>> page_updated_xobjects;
                                  const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
@@ -1662,7 +1691,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                                      zones.push_back(zone);
                                  }
 
-                                 fz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
+                                 wz_matrix ctm = ComputePageCTM(shared_doc->get_page_geometry(page_index));
                                  float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
                                  std::map<int, std::vector<uint8_t>> page_updated_xobjects;
                                  const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
@@ -1711,7 +1740,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                      zones.push_back(zone);
                  }
 
-                 fz_matrix ctm = ComputePageCTM(self.doc->get_page_geometry(page_index));
+                 wz_matrix ctm = ComputePageCTM(self.doc->get_page_geometry(page_index));
                  float ctm_arr[6] = {ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f};
                  std::map<int, std::vector<uint8_t>> updated_xobjects;
                  const std::vector<uint8_t> filtered = winnerz::WinnerZ_RedactPage(
@@ -1897,7 +1926,7 @@ PYBIND11_MODULE(winnerz_core, m) {
                          for (auto& task_item : tasks_array) {
                              Winnerz::WinInsertRectTask task;
                              auto rect = task_item["rect"];
-                             float pad = 2.0f; // Default padding to fix tight PyMuPDF bboxes
+                             float pad = 2.0f; 
                              if (task_item.contains("pad")) {
                                  pad = task_item["pad"].get<float>();
                              }

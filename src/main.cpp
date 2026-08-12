@@ -12,7 +12,6 @@
 using namespace WinExtract;
 
 void process_winnerz_engine(const std::string& path) {
-    // 1. PIPELINE Bước 1: Mở Document (Pure C++ / xref / objects)
     auto doc = WinPdfDocument::open(path);
     if (!doc) {
         std::cerr << "ERROR: Cannot open PDF file or xref not found: " << path << std::endl;
@@ -21,7 +20,7 @@ void process_winnerz_engine(const std::string& path) {
 
     int page_count = doc->count_pages();
     std::cout << "--- WINNERZ PROJECT: STANDALONE ENGINE CLONE ---" << std::endl;
-    std::cout << "Fitz Pipeline: Document -> Page -> Interpreter -> Device (SText)" << std::endl;
+    std::cout << "Pipeline: Document -> Page -> Interpreter -> Device (SText)" << std::endl;
     std::cout << "Input PDF: " << path << std::endl;
     std::cout << "Detected pages/streams: " << page_count << std::endl;
 
@@ -31,7 +30,6 @@ void process_winnerz_engine(const std::string& path) {
     }
 
     for (int i = 0; i < page_count; i++) {
-        // 2. PIPELINE Bước 2: Bóc Page Content Stream
         std::vector<uint8_t> stream = doc->get_page_content(i);
         WinFontUnicodeMap font_unicode_map = doc->get_page_font_unicode_map(i);
         WinFontWidthMap   font_width_map   = doc->get_page_font_width_map(i);
@@ -71,14 +69,13 @@ void process_winnerz_engine(const std::string& path) {
 
         WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
 
-        // KẾT QUẢ ĐÃ ĐƯỢC NHÓM LẠI THEO HỆ THỐNG PHÂN CẤP (Fitz SText)
         WinPage structured_page = dev.finish_page();
         std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;
         WinTextExtractor::print_to_terminal(structured_page);
     }
 }
 
-#include <fstream> // Cần để check file tồn tại
+#include <fstream> 
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
@@ -91,10 +88,8 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         path = argv[1];
     } else {
-        // WinnerZ Smart Path: Tự tìm file nếu đang chạy trong build/Debug
         std::ifstream f(path.c_str());
         if (!f.good()) {
-            // Thử lùi lại 2 cấp (để thoát khỏi build/Debug)
             path = "../../data/ieee-format.pdf";
         }
     }

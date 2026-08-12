@@ -1,4 +1,4 @@
-#include "insert.hpp"
+﻿#include "insert.hpp"
 #include "pdf_engine.hpp"
 #include <unordered_map>
 #include <vector>
@@ -248,7 +248,7 @@ struct BidiStateInsert {
     float font_size;
 };
 
-static void fz_bidi_insert_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
+static void wz_bidi_insert_cb(const uint32_t *fragment, size_t fragmentLen, int bidiLevel, int script, void *arg) {
     BidiStateInsert* state = static_cast<BidiStateInsert*>(arg);
     size_t start_idx = fragment - state->utf32->data();
     
@@ -384,8 +384,8 @@ static std::vector<ShapedLine> HarfbuzzWordWrap(const std::string& text, FontSel
     state.font_selector = font_selector;
     state.font_size = font_size;
     
-    fz_bidi_direction baseDir = FZ_BIDI_UNSET;
-    fz_bidi_fragment_text(nullptr, utf32.data(), utf32.size(), &baseDir, fz_bidi_insert_cb, &state, 0);
+    wz_bidi_direction baseDir = WZ_BIDI_UNSET;
+    wz_bidi_fragment_text(nullptr, utf32.data(), utf32.size(), &baseDir, wz_bidi_insert_cb, &state, 0);
 
     auto wrap_and_reorder = [&](const std::vector<LogicalGlyph>& line_logical_glyphs, float width) {
         std::vector<LogicalGlyph> reordered = line_logical_glyphs;
@@ -496,23 +496,23 @@ static std::vector<uint8_t> compress_zlib(const std::vector<uint8_t>& data) {
     return dest;
 }
 
-struct fz_matrix {
+struct wz_matrix {
     float a, b, c, d, e, f;
 };
 
-static fz_matrix fz_scale(float sx, float sy) {
+static wz_matrix wz_scale(float sx, float sy) {
     return {sx, 0, 0, sy, 0, 0};
 }
 
-static fz_matrix fz_translate(float tx, float ty) {
+static wz_matrix wz_translate(float tx, float ty) {
     return {1, 0, 0, 1, tx, ty};
 }
 
-static fz_matrix fz_pre_rotate(fz_matrix m, float degrees) {
+static wz_matrix wz_pre_rotate(wz_matrix m, float degrees) {
     float angle = degrees * 3.14159265358979323846f / 180.0f;
     float s = std::sin(angle);
     float c = std::cos(angle);
-    fz_matrix r = {c, s, -s, c, 0, 0};
+    wz_matrix r = {c, s, -s, c, 0, 0};
     return {
         r.a * m.a + r.b * m.c,
         r.a * m.b + r.b * m.d,
@@ -522,7 +522,7 @@ static fz_matrix fz_pre_rotate(fz_matrix m, float degrees) {
     };
 }
 
-static fz_matrix fz_concat(fz_matrix left, fz_matrix right) {
+static wz_matrix wz_concat(wz_matrix left, wz_matrix right) {
     return {
         left.a * right.a + left.b * right.c,
         left.a * right.b + left.b * right.d,
@@ -533,7 +533,7 @@ static fz_matrix fz_concat(fz_matrix left, fz_matrix right) {
     };
 }
 
-static fz_matrix fz_invert_matrix(fz_matrix m) {
+static wz_matrix wz_invert_matrix(wz_matrix m) {
     float det = m.a * m.d - m.b * m.c;
     if (det == 0.0f) return {1, 0, 0, 1, 0, 0};
     float rdet = 1.0f / det;
@@ -547,7 +547,7 @@ static fz_matrix fz_invert_matrix(fz_matrix m) {
     };
 }
 
-static std::array<float, 4> fz_transform_rect(const std::array<float, 4>& r, fz_matrix m) {
+static std::array<float, 4> wz_transform_rect(const std::array<float, 4>& r, wz_matrix m) {
     float x0 = r[0] * m.a + r[1] * m.c + m.e;
     float y0 = r[0] * m.b + r[1] * m.d + m.f;
     float x1 = r[2] * m.a + r[1] * m.c + m.e;
@@ -565,7 +565,7 @@ static std::array<float, 4> fz_transform_rect(const std::array<float, 4>& r, fz_
     };
 }
 
-static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
+static wz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
     float userunit = 1.0f;
     
     std::array<float, 4> mediabox = {geo.mediabox.x0, geo.mediabox.y0, geo.mediabox.x1, geo.mediabox.y1};
@@ -577,11 +577,11 @@ static fz_matrix ComputePageCTM(const WinExtract::WinPageGeometry& geo) {
     rotate = 90 * ((rotate + 45) / 90);
     if (rotate >= 360) rotate = 0;
 
-    fz_matrix page_ctm = fz_scale(userunit, -userunit);
-    page_ctm = fz_pre_rotate(page_ctm, -static_cast<float>(rotate));
+    wz_matrix page_ctm = wz_scale(userunit, -userunit);
+    page_ctm = wz_pre_rotate(page_ctm, -static_cast<float>(rotate));
 
-    std::array<float, 4> trans_cropbox = fz_transform_rect(cropbox, page_ctm);
-    page_ctm = fz_concat(page_ctm, fz_translate(-trans_cropbox[0], -trans_cropbox[1]));
+    std::array<float, 4> trans_cropbox = wz_transform_rect(cropbox, page_ctm);
+    page_ctm = wz_concat(page_ctm, wz_translate(-trans_cropbox[0], -trans_cropbox[1]));
     
     return page_ctm;
 }
@@ -765,7 +765,7 @@ static size_t find_matching_dict_end(const std::string& s, size_t start) {
 
 // -----------------------------------------------------------------------
 // Font discovery: scan fonts_dir, classify each .ttf/.otf by bold/italic.
-// grid[bold_idx][italic_idx] — 0=false, 1=true.
+// grid[bold_idx][italic_idx] â€” 0=false, 1=true.
 // -----------------------------------------------------------------------
 
 
@@ -978,7 +978,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
     auto& font_grid = g_font_grid;
     auto& full_charset_cache = g_full_charset_cache;
 
-    // Temporarily point GetFontSlot to use full_charset_cache — we do it inline:
+    // Temporarily point GetFontSlot to use full_charset_cache â€” we do it inline:
     // Re-implement lookup using the saved caches directly.
     auto GetFontSlotFast = [&](const WinInsertTextTask& task, const std::vector<uint32_t>& utf32) -> FontSlot* {
         if (utf32.empty()) return nullptr;
@@ -1183,7 +1183,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
     std::string all_font_entries;
     std::map<int, std::string> new_objects;
 
-    // Slot aliases: (bold=0,italic=0)→RN, (1,0)→BN, (0,1)→RI, (1,1)→BI
+    // Slot aliases: (bold=0,italic=0)â†’RN, (1,0)â†’BN, (0,1)â†’RI, (1,1)â†’BI
     const char* alias_table[2][2] = { {"F_WNZRN", "F_WNZRI"}, {"F_WNZBN", "F_WNZBI"} };
     for (int b = 0; b < 2; b++) {
         for (int i = 0; i < 2; i++) {
@@ -1288,8 +1288,8 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
 
             WinExtract::WinPdfObject page_obj;
             WinExtract::WinPageGeometry geo;
-            fz_matrix page_ctm;
-            fz_matrix inv_ctm;
+            wz_matrix page_ctm;
+            wz_matrix inv_ctm;
             
             {
                 std::lock_guard<std::mutex> lock(doc_mutex);
@@ -1299,7 +1299,7 @@ static std::vector<uint8_t> InsertTextToMultiplePagesInternal(WinExtract::WinPdf
             
             std::string page_dict = page_obj.dict;
             page_ctm = ComputePageCTM(geo);
-            inv_ctm = fz_invert_matrix(page_ctm);
+            inv_ctm = wz_invert_matrix(page_ctm);
 
             // Robust font injection handling inherited and indirect /Resources
             bool font_injected = false;
@@ -1764,8 +1764,8 @@ std::vector<uint8_t> InsertRectsToMultiplePages(WinExtract::WinPdfDocument* doc,
             std::lock_guard<std::mutex> lock(doc_mutex);
             geo = doc->get_page_geometry(page_index);
         }
-        fz_matrix page_ctm = ComputePageCTM(geo);
-        fz_matrix inv_ctm = fz_invert_matrix(page_ctm);
+        wz_matrix page_ctm = ComputePageCTM(geo);
+        wz_matrix inv_ctm = wz_invert_matrix(page_ctm);
 
         auto to_pdf = [&inv_ctm](float xi, float yi) -> std::pair<float, float> {
             return { xi * inv_ctm.a + yi * inv_ctm.c + inv_ctm.e, xi * inv_ctm.b + yi * inv_ctm.d + inv_ctm.f };
@@ -1917,3 +1917,4 @@ float MeasureTextWidth(const std::string& text, const std::string& font_path, fl
 
 } // namespace Winnerz
 #endif
+
