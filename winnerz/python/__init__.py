@@ -817,7 +817,6 @@ class Document:
                 ]
             }
         Note: It is recommended to pad the bounding boxes by 2-3 points (e.g., rect[0]-2, rect[1]-2, rect[2]+2, rect[3]+2)
-        to ensure full coverage of text artifacts since PyMuPDF font bounding boxes can be very tight.
         """
         if hasattr(self._core_doc, "insert_rects_to_pages_json"):
             return self._core_doc.insert_rects_to_pages_json(json_str)
