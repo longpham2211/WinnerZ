@@ -63,7 +63,6 @@ These functions execute sequentially.
 
 *   `winnerz.open(path_or_bytes)`: The recommended global method to open a PDF. It utilizes an intelligent global caching mechanism to prevent redundant initializations and file I/O overhead.
 *   `winnerz.preload_fonts(fonts_dir)`: Pre-loads fonts into memory from a specified directory to accelerate bulk text-insertion tasks.
-*   `winnerz.measure_text_width(text, font_path, font_size, is_bold=False, is_italic=False)`: Uses HarfBuzz and FreeType in C++ to precisely measure the horizontal pixel width of a text string. Crucial for calculating word-wrap and alignments before insertion.
 
 ## Class Reference
 
@@ -149,7 +148,7 @@ Thanks to the native C++ multi-threading pipeline and persistent object caching,
 *  PyMuPDF (`fitz`): **~0.44s**
 *  WinnerZ (`get_all_text()`): **~0.18s** (2.5x Faster)
 
-*Tested on a 22MB Russian Chemistry Book (Structured Dictionary/JSON Extraction):*
+*Tested on a 22MB Russian Chemistry Book (In data folder) (Structured Dictionary/JSON Extraction):*
 *  PyMuPDF Single-Thread (`get_text("json")`): **~24.2s**
 *  WinnerZ Native Multi-Thread (`get_all_dicts_json()`): **~11.4s** (> 2x Faster)
 
