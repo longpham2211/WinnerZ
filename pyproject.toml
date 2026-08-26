@@ -8,7 +8,7 @@ version = "1.2.18.16"
 description = "High-performance PDF text extraction library."
 readme = "readme.md"
 authors = [
-    { name = "Long Pham", email = "banhkha888@gmail.com" },
+    { name = "SmallLab28 software by (Long pham)", email = "banhkha888@gmail.com" },
 ]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
