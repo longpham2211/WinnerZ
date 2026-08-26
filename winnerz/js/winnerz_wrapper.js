@@ -117,6 +117,15 @@ export class Page {
   }
 
   /**
+   * Extract image XObjects from the page.
+   * Python: page.get_images()
+   * @returns {Array<{id: string, width: number, height: number, bpc: number, colorspace: string, filter: string, stream: Uint8Array}>}
+   */
+  get_images() {
+    return this._doc._raw.getImages(this.index);
+  }
+
+  /**
    * Redact (black-out) rectangular areas. Returns new PDF bytes.
    * Python: page.redact_text(rects)
    * @param {Array<[number,number,number,number]>} rects

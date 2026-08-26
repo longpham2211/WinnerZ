@@ -185,6 +185,22 @@ const fonts3 = doc[0].get_page_font_basenames();  // via page object
 
 ---
 
+## 6. Image Extraction
+
+```python
+# Python
+images = doc[0].get_images()
+images_json = doc[0].get_images_json()
+```
+
+```javascript
+// JavaScript — identical API
+const images = doc[0].get_images();           // Returns array of objects with raw stream bytes
+const images_json = doc[0].get_images_json(); // Returns JSON string containing Base64 PNGs
+```
+
+---
+
 ## 6. Get Current PDF Bytes
 
 ```python

@@ -95,6 +95,8 @@ Represents a single page within a `Document`.
 **Methods:**
 *   `get_text(mode="dict", sort=False)`: Extracts text content. 
     *   `mode`: Can be `dict`, `rawdict`, `blocks`, `text`, `json`, or `rawjson`.
+*   `get_images()`: Extracts raw image streams from the page (similar to PyMuPDF). Returns a list of dictionaries containing raw image bytes and metadata.
+*   `get_images_json()`: Extracts images and automatically handles color conversion (CMYK to RGB, Indexed Palette mapping). Returns a JSON string containing Base64 encoded PNG images ready for web use.
 *   `get_drawings()`: Extracts vector drawings and graphics, mapping them to structured dictionaries containing `rect`, `fill`, and `stroke` properties.
 *   `get_pixmap(matrix=None, clip=None)`: Renders the page to a bitmap image (`Pixmap`) using the C++ core engine.
 *   `redact_text(rects, output_path, min_overlap_ratio=0.0)`: (Legacy C++ Core) Applies text-only redaction to the specified rectangles and saves the output to a new PDF file.

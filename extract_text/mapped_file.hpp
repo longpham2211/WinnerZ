@@ -1,23 +1,24 @@
 // =============================================================================
 // mapped_file.hpp  —  WinnerZ MappedFile: Zero-copy PDF I/O
 // =============================================================================
+// Copyright (c) 2026 SmallLab. All rights reserved.
 //
-// Thay thế std::string / std::vector<uint8_t> read_all() bằng mmap.
+// Replaces std::string / std::vector<uint8_t> read_all() with mmap.
 //
-// Lợi ích:
-//   • File 1 GB = RAM vật lý chỉ dùng đúng lượng page OS đang đọc.
-//   • Trả về std::string_view → zero-copy tuyệt đối khi truyền sang parser.
-//   • Không bao giờ throw std::bad_alloc dù file có vài GB.
-//   • Tự động tương thích Windows (MapViewOfFile) và Linux/macOS (mmap).
+// Benefits:
+//   • 1 GB File = Physical RAM only consumes pages currently read by the OS.
+//   • Returns std::string_view → absolute zero-copy when passing to parser.
+//   • Never throws std::bad_alloc even for multi-gigabyte files.
+//   • Automatic compatibility with Windows (MapViewOfFile) and Linux/macOS (mmap).
 //
-// Cách dùng:
+// Usage:
 //   WinExtract::MappedFile mf("huge.pdf");
 //   if (!mf.ok()) { /* handle error */ }
-//   std::string_view view = mf.view();      // zero-copy, dùng như string
-//   const uint8_t*   ptr  = mf.data();      // raw bytes nếu cần
+//   std::string_view view = mf.view();      // zero-copy, use like a string
+//   const uint8_t*   ptr  = mf.data();      // raw bytes if needed
 //   size_t           sz   = mf.size();
 //
-// MappedFile là move-only (không copy được) — giống unique_ptr.
+// Note: MappedFile is move-only (non-copyable) — similar to unique_ptr.
 // =============================================================================
 
 #pragma once

@@ -551,6 +551,15 @@ class Page:
             mapped.append(item)
         return mapped
 
+    def get_images(self):
+        """
+        Extract image XObjects from the page.
+        Returns a list of dicts: {"id", "width", "height", "bpc", "colorspace", "filter", "stream"}
+        """
+        if hasattr(self.doc._core_doc, "get_images"):
+            return self.doc._core_doc.get_images(self.index)
+        raise NotImplementedError("get_images is not supported by the core")
+
     @property
     def rect(self):
         if self._rect_cache is None:
@@ -942,7 +951,11 @@ except Exception:
     pass
 
 
-# Internal API
+##############################################################################
+#####                                                                   ######
+#####                          INTERNAL API                             ######
+#####                                                                   ######
+##############################################################################
 def measure_text_width(text, font_path, font_size, is_bold=False, is_italic=False):
     """
     Measure the horizontal pixel width of a text string using C++ (HarfBuzz and FreeType).

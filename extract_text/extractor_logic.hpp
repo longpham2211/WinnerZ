@@ -41,10 +41,20 @@ struct WinLine {
 
 enum class BlockType { TEXT, IMAGE, VECTOR };
 
+struct WinImageXObject;
+
 struct WinBlock {
     BlockType type;
     Rect bbox;
     std::vector<WinLine> lines;
+    
+    // Image specific fields
+    std::string image_base64;
+    std::string image_ext;
+    int image_width = 0;
+    int image_height = 0;
+    std::string image_color_space;
+    std::vector<float> image_decode;
 };
 
 struct WinPage {
@@ -63,6 +73,8 @@ public:
                   const std::string& font_name, float size, uint32_t color, 
                   bool bold, bool italic, bool serif, bool mono, int wmode, float ascender, float descender, 
                   int bidi_level, bool has_real_glyph);
+                  
+    void add_image(const Rect& bbox, const WinImageXObject& img);
 
     WinPage finish_page();
     std::string get_text(const WinPage& page);

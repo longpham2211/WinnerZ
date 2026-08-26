@@ -67,7 +67,8 @@ void process_winnerz_engine(const std::string& path) {
             }
         }
 
-        WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        std::shared_ptr<const WinImageXObjectMap> image_xobject_map = doc->get_page_image_xobject_map(i);
+        WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, font_w2_map, color_space_map, form_xobject_map, image_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
 
         WinPage structured_page = dev.finish_page();
         std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;

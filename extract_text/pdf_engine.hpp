@@ -112,6 +112,21 @@ struct WinColorSpaceDef {
 
 using WinColorSpaceMap = std::unordered_map<std::string, WinColorSpaceDef>;
 
+struct WinImageXObject {
+    int obj_id = -1;
+    int width = 0;
+    int height = 0;
+    int bits_per_component = 8;
+    std::string color_space;
+    std::string filter;
+    std::vector<float> decode;
+    std::shared_ptr<const std::vector<uint8_t>> stream_ptr;
+    std::shared_ptr<const std::vector<uint8_t>> smask_ptr;
+    std::vector<uint8_t> indexed_palette;
+};
+
+using WinImageXObjectMap = std::unordered_map<std::string, WinImageXObject>;
+
 struct WinFormXObject {
     std::shared_ptr<const std::vector<uint8_t>> stream_ptr;
     WinFontUnicodeMap font_unicode_map;
@@ -163,6 +178,7 @@ public:
     WinFontW2Map get_page_font_w2_map(int page_idx);
     WinColorSpaceMap get_page_color_space_map(int page_idx);
     std::shared_ptr<const WinFormXObjectMap> get_page_form_xobject_map(int page_idx);
+    std::shared_ptr<const WinImageXObjectMap> get_page_image_xobject_map(int page_idx);
     WinPageGeometry   get_page_geometry(int page_idx);
     // Save a new PDF by replacing a page's /Contents with a new decoded stream.
     // The output is written as an incremental update to preserve original objects.
@@ -246,6 +262,9 @@ private:
     std::unordered_map<int, std::shared_ptr<const std::vector<uint8_t>>> cached_decoded_streams;
     std::unordered_map<int, std::shared_ptr<const WinFormXObjectMap>> cached_page_xobject_maps;
     std::unordered_map<std::string, std::shared_ptr<const WinFormXObjectMap>> cached_resource_xobject_maps;
+    
+    std::unordered_map<int, std::shared_ptr<const WinImageXObjectMap>> cached_page_image_xobject_maps;
+    std::unordered_map<std::string, std::shared_ptr<const WinImageXObjectMap>> cached_resource_image_xobject_maps;
 
     mutable std::recursive_mutex cache_mutex;
     std::recursive_mutex objstm_mutex;
@@ -278,6 +297,7 @@ public:
                    const WinFontW2Map& font_w2_map = {},
                    const WinColorSpaceMap& color_space_map = {},
                    std::shared_ptr<const WinFormXObjectMap> form_xobject_map = nullptr,
+                   std::shared_ptr<const WinImageXObjectMap> image_xobject_map = nullptr,
                    const float* initial_ctm = nullptr,
                    int recursion_depth = 0,
                    const Rect* page_mediabox = nullptr,

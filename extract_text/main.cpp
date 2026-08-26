@@ -31,7 +31,9 @@ void process_winnerz_engine(const std::string& path) {
 
     for (int i = 0; i < page_count; i++) {
         // 2. PIPELINE Bước 2: Bóc Page Content Stream
+        std::cout << "\n--- TRANG " << i + 1 << " ---" << std::endl;
         std::vector<uint8_t> stream = doc->get_page_content(i);
+
         WinFontUnicodeMap font_unicode_map = doc->get_page_font_unicode_map(i);
         WinFontWidthMap   font_width_map   = doc->get_page_font_width_map(i);
         WinFontCodeBytesMap font_code_bytes_map = doc->get_page_font_code_bytes_map(i);
@@ -40,39 +42,17 @@ void process_winnerz_engine(const std::string& path) {
         WinFontVerticalMetricsMap font_vertical_metrics_map = doc->get_page_font_vertical_metrics_map(i);
         WinFontW2Map font_w2_map = doc->get_page_font_w2_map(i);
         WinColorSpaceMap color_space_map = doc->get_page_color_space_map(i);
-        WinFormXObjectMap form_xobject_map = doc->get_page_form_xobject_map(i);
+        std::shared_ptr<const WinFormXObjectMap> form_xobject_map = doc->get_page_form_xobject_map(i);
         Rect              mediabox         = doc->get_page_geometry(i).mediabox;
 
         WinTextExtractor dev;
         dev.begin_page(mediabox.x1 - mediabox.x0, mediabox.y1 - mediabox.y0);
 
-        if (std::getenv("WINEXTRACT_DEBUG_STREAM") != nullptr && i == 2) {
-            std::string s(reinterpret_cast<const char*>(stream.data()), stream.size());
-            size_t p = s.find("87,800");
-            if (p != std::string::npos) {
-                size_t from = (p > 120) ? (p - 120) : 0;
-                size_t to = (p + 120 < s.size()) ? (p + 120) : s.size();
-                std::cout << "\n[DEBUG_STREAM_CONTEXT]\n";
-                for (size_t k = from; k < to; ++k) {
-                    unsigned char c = static_cast<unsigned char>(s[k]);
-                    if (c == '\r' || c == '\n') {
-                        std::cout << '\\' << ((c == '\r') ? 'r' : 'n');
-                    } else if (c >= 32 && c <= 126) {
-                        std::cout << static_cast<char>(c);
-                    } else {
-                        std::cout << "\\x";
-                        const char* hex = "0123456789ABCDEF";
-                        std::cout << hex[(c >> 4) & 0x0F] << hex[c & 0x0F];
-                    }
-                }
-                std::cout << "\n[END_DEBUG_STREAM_CONTEXT]\n";
-            }
-        }
-
         WinPdfInterpreter::run(stream, dev, font_unicode_map, font_width_map, font_code_bytes_map, font_codespace_map, font_matrix_map, font_vertical_metrics_map, font_w2_map, color_space_map, form_xobject_map, nullptr, 0, &mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         WinPage structured_page = dev.finish_page();
-        std::cout << "\n--- TRANG " << i + 1 << " (Pipeline Finished) ---" << std::endl;
-        WinTextExtractor::print_to_terminal(structured_page);
+        
+        std::string page_text = dev.get_text(structured_page);
+        std::cout << "Page " << i + 1 << " text:\n" << page_text << "\n";
     }
 }
 

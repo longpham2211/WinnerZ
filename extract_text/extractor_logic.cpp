@@ -1,4 +1,5 @@
-﻿#include "extractor_logic.hpp"
+#include "extractor_logic.hpp"
+#include "pdf_engine.hpp"
 #include "ucdn.hpp"
 #include "bidi_imp.hpp"
 #include <algorithm>
@@ -230,6 +231,235 @@ void WinTextExtractor::add_char(int unicode, float x, float y, float adv, float 
     add_char_imp(c, main_glyph, adv, matrix, font_name, size, color, bold, italic, serif, mono, wmode, bidi, false, ascender, descender, false);
 }
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_PNG
+#include "../include/stb/stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../include/stb/stb_image_write.h"
+#include "../include/stb/base64.hpp"
+
+#include "miniz.h"
+#include "lcms2.h"
+#include "icc_profiles.h"
+
+static void write_png_data_to_vector(void *context, void *data, int size) {
+    auto* vec = static_cast<std::vector<uint8_t>*>(context);
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    vec->insert(vec->end(), bytes, bytes + size);
+}
+
+void WinTextExtractor::add_image(const Rect& bbox, const WinImageXObject& img) {
+    if (!img.stream_ptr || img.stream_ptr->empty()) return;
+    
+    printf("DEBUG add_image: obj_id %d, indexed_palette.size() = %zu\n", img.obj_id, img.indexed_palette.size());
+    if (img.indexed_palette.size() > 10) {
+        printf("DEBUG palette: %d %d %d %d %d %d %d %d %d %d\n",
+               img.indexed_palette[0], img.indexed_palette[1], img.indexed_palette[2],
+               img.indexed_palette[3], img.indexed_palette[4], img.indexed_palette[5],
+               img.indexed_palette[6], img.indexed_palette[7], img.indexed_palette[8],
+               img.indexed_palette[9]);
+    }
+    
+    int w = img.width;
+    int h = img.height;
+    std::string base64_data = "";
+    std::string ext = "png";
+    
+    std::vector<uint8_t> png_data;
+    bool success = false;
+    
+    if (img.filter == "DCTDecode") {
+        // Decode JPEG natively using stb_image
+        int req_comp = 3; 
+        // For CMYK JPEG, stb_image might load it as 4 channels, or we might need to handle it.
+        // stb_image actually converts CMYK JPEGs to RGB automatically in some cases, but often it just loads as 4 channels.
+        int x, y, comp;
+        stbi_uc* pixels = stbi_load_from_memory(img.stream_ptr->data(), img.stream_ptr->size(), &x, &y, &comp, 0);
+        if (pixels) {
+            w = x; h = y;
+            if (comp == 4 && img.color_space.find("CMYK") != std::string::npos) {
+                bool inverted_cmyk = false;
+                if (img.decode.size() >= 8) {
+                    if (img.decode[0] > img.decode[1]) {
+                        inverted_cmyk = true;
+                    }
+                } else if (img.filter == "DCTDecode" || img.filter == "DCT") {
+                    // Adobe CMYK JPEGs in PDF are typically inverted (0 = 100% ink)
+                    inverted_cmyk = true;
+                }
+
+#if WINNERZ_USE_LCMS2
+                // LCMS2 expects standard CMYK (255 = 100% ink)
+                if (inverted_cmyk) {
+                    for (size_t i = 0; i < (size_t)(w * h * 4); i++) {
+                        pixels[i] = 255 - pixels[i];
+                    }
+                }
+
+                // We have 4 channels (CMYK). We should use LCMS2 to convert to RGB.
+                cmsHPROFILE inProfile = cmsCreate_sRGBProfile(); // fallback
+                if (img.color_space.find("CMYK") != std::string::npos) {
+                    inProfile = cmsOpenProfileFromMem(Coated_Fogra39L_VIGC_300_icc, sizeof(Coated_Fogra39L_VIGC_300_icc));
+                }
+                cmsHPROFILE outProfile = cmsCreate_sRGBProfile();
+                cmsHTRANSFORM transform = cmsCreateTransform(inProfile, TYPE_CMYK_8, outProfile, TYPE_RGB_8, INTENT_PERCEPTUAL, 0);
+                
+                std::vector<uint8_t> rgb_pixels(w * h * 3);
+                cmsDoTransform(transform, pixels, rgb_pixels.data(), w * h);
+                
+                cmsDeleteTransform(transform);
+                cmsCloseProfile(inProfile);
+                cmsCloseProfile(outProfile);
+                
+                stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, 3, rgb_pixels.data(), w * 3);
+                success = true;
+#else
+                std::vector<uint8_t> rgb_pixels(w * h * 3);
+                for (size_t i = 0; i < (size_t)(w * h); i++) {
+                    float c = pixels[i * 4 + 0] / 255.0f;
+                    float m = pixels[i * 4 + 1] / 255.0f;
+                    float y = pixels[i * 4 + 2] / 255.0f;
+                    float k = pixels[i * 4 + 3] / 255.0f;
+                    
+                    if (inverted_cmyk) {
+                        rgb_pixels[i * 3 + 0] = (uint8_t)(255.0f * c * k);
+                        rgb_pixels[i * 3 + 1] = (uint8_t)(255.0f * m * k);
+                        rgb_pixels[i * 3 + 2] = (uint8_t)(255.0f * y * k);
+                    } else {
+                        rgb_pixels[i * 3 + 0] = (uint8_t)(255.0f * (1.0f - c) * (1.0f - k));
+                        rgb_pixels[i * 3 + 1] = (uint8_t)(255.0f * (1.0f - m) * (1.0f - k));
+                        rgb_pixels[i * 3 + 2] = (uint8_t)(255.0f * (1.0f - y) * (1.0f - k));
+                    }
+                }
+                stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, 3, rgb_pixels.data(), w * 3);
+                success = true;
+#endif
+            } else {
+                stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, comp, pixels, w * comp);
+                success = true;
+            }
+            stbi_image_free(pixels);
+        }
+    } else if (img.filter == "FlateDecode" || img.filter.empty()) {
+        std::vector<uint8_t> raw_pixels;
+        bool has_pixels = false;
+        
+        // Bỏ mz_uncompress vì pdf_engine_helpers.inc.cpp đã giải nén sẵn
+        raw_pixels = *img.stream_ptr;
+        has_pixels = true;
+
+        if (has_pixels && img.bits_per_component == 8) {
+            int comps = raw_pixels.size() / (w * h);
+            if (!img.indexed_palette.empty() && comps == 1) {
+                int out_comps = (img.smask_ptr && img.smask_ptr->size() >= (size_t)(w * h)) ? 4 : 3;
+                std::vector<uint8_t> out_pixels(w * h * out_comps);
+                const uint8_t* smask = (out_comps == 4) ? img.smask_ptr->data() : nullptr;
+                for (size_t i = 0; i < (size_t)(w * h); i++) {
+                    uint8_t idx = raw_pixels[i];
+                    if (idx * 3 + 2 < img.indexed_palette.size()) {
+                        out_pixels[i * out_comps + 0] = img.indexed_palette[idx * 3 + 0];
+                        out_pixels[i * out_comps + 1] = img.indexed_palette[idx * 3 + 1];
+                        out_pixels[i * out_comps + 2] = img.indexed_palette[idx * 3 + 2];
+                    } else {
+                        out_pixels[i * out_comps + 0] = 0;
+                        out_pixels[i * out_comps + 1] = 0;
+                        out_pixels[i * out_comps + 2] = 0;
+                    }
+                    if (out_comps == 4) {
+                        out_pixels[i * out_comps + 3] = smask[i];
+                    }
+                }
+                stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, out_comps, out_pixels.data(), w * out_comps);
+                success = true;
+            } else if (comps == 1 || comps == 3) {
+                if (img.smask_ptr && img.smask_ptr->size() >= (size_t)(w * h)) {
+                    int out_comps = comps + 1;
+                    std::vector<uint8_t> out_pixels(w * h * out_comps);
+                    const uint8_t* smask = img.smask_ptr->data();
+                    for (size_t i = 0; i < (size_t)(w * h); i++) {
+                        for (int c = 0; c < comps; c++) {
+                            out_pixels[i * out_comps + c] = raw_pixels[i * comps + c];
+                        }
+                        out_pixels[i * out_comps + comps] = smask[i];
+                    }
+                    stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, out_comps, out_pixels.data(), w * out_comps);
+                    success = true;
+                } else {
+                    stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, comps, raw_pixels.data(), w * comps);
+                    success = true;
+                }
+            } else if (comps == 4) {
+                bool inverted_cmyk = false;
+                if (img.decode.size() >= 8) {
+                    if (img.decode[0] > img.decode[1]) {
+                        inverted_cmyk = true;
+                    }
+                }
+#if WINNERZ_USE_LCMS2
+                // LCMS2 expects standard CMYK (255 = 100% ink)
+                if (inverted_cmyk) {
+                    for (size_t i = 0; i < (size_t)(w * h * 4); i++) {
+                        raw_pixels[i] = 255 - raw_pixels[i];
+                    }
+                }
+
+                // Assuming CMYK FlateDecode or Raw CMYK, we MUST convert to RGB so PPTX doesn't display corrupt colors.
+                cmsHPROFILE inProfile = cmsCreate_sRGBProfile(); // fallback
+                if (img.color_space.find("CMYK") != std::string::npos) {
+                    inProfile = cmsOpenProfileFromMem(Coated_Fogra39L_VIGC_300_icc, sizeof(Coated_Fogra39L_VIGC_300_icc));
+                }
+                cmsHPROFILE outProfile = cmsCreate_sRGBProfile();
+                cmsHTRANSFORM transform = cmsCreateTransform(inProfile, TYPE_CMYK_8, outProfile, TYPE_RGB_8, INTENT_PERCEPTUAL, 0);
+                
+                std::vector<uint8_t> rgb_pixels(w * h * 3);
+                cmsDoTransform(transform, raw_pixels.data(), rgb_pixels.data(), w * h);
+                
+                cmsDeleteTransform(transform);
+                cmsCloseProfile(inProfile);
+                cmsCloseProfile(outProfile);
+                
+                stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, 3, rgb_pixels.data(), w * 3);
+                success = true;
+#else
+                std::vector<uint8_t> rgb_pixels(w * h * 3);
+                for (size_t i = 0; i < (size_t)(w * h); i++) {
+                    float c = raw_pixels[i * 4 + 0] / 255.0f;
+                    float m = raw_pixels[i * 4 + 1] / 255.0f;
+                    float y = raw_pixels[i * 4 + 2] / 255.0f;
+                    float k = raw_pixels[i * 4 + 3] / 255.0f;
+                    
+                    if (inverted_cmyk) {
+                        rgb_pixels[i * 3 + 0] = (uint8_t)(255.0f * c * k);
+                        rgb_pixels[i * 3 + 1] = (uint8_t)(255.0f * m * k);
+                        rgb_pixels[i * 3 + 2] = (uint8_t)(255.0f * y * k);
+                    } else {
+                        rgb_pixels[i * 3 + 0] = (uint8_t)(255.0f * (1.0f - c) * (1.0f - k));
+                        rgb_pixels[i * 3 + 1] = (uint8_t)(255.0f * (1.0f - m) * (1.0f - k));
+                        rgb_pixels[i * 3 + 2] = (uint8_t)(255.0f * (1.0f - y) * (1.0f - k));
+                    }
+                }
+                stbi_write_png_to_func(write_png_data_to_vector, &png_data, w, h, 3, rgb_pixels.data(), w * 3);
+                success = true;
+#endif
+            }
+        }
+    }
+    
+    if (success && !png_data.empty()) {
+        base64_data = "data:image/png;base64," + Winnerz::base64_encode(png_data.data(), png_data.size());
+    }
+
+    if (page.blocks.empty() || page.blocks.back().type != BlockType::IMAGE) {
+        page.blocks.push_back({BlockType::IMAGE, bbox, {}, base64_data, ext, w, h, img.color_space, img.decode});
+    } else {
+        page.blocks.push_back({BlockType::IMAGE, bbox, {}, base64_data, ext, w, h, img.color_space, img.decode});
+    }
+    cur_block = nullptr;
+    cur_line = nullptr;
+}
+
 void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6], const std::string& font_name,
                                     float size, uint32_t color, bool bold, bool italic, bool serif, bool mono,
                                     int wmode, int bidi, bool force_new_line, float ascender, float descender, bool is_synthetic_space) 
@@ -243,7 +473,9 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     
     bidi = bidi & 1; 
     
-    float m_size = matrix_expansion(m);
+    float font_height = ascender - descender;
+    if (font_height <= 0.001f) font_height = 1.0f;
+    float m_size = font_height * matrix_expansion(m);
     if (m_size <= 0.001f) m_size = size;
     if (m_size <= 0.001f) m_size = 1.0f;
     
@@ -496,6 +728,8 @@ WinPage WinTextExtractor::finish_page() {
     }
 
     for (auto& block : page.blocks) {
+        if (block.type == BlockType::IMAGE) continue;
+        
         bool block_has_bbox = false;
 
         for (auto& line : block.lines) {
@@ -576,7 +810,7 @@ WinPage WinTextExtractor::finish_page() {
 
     page.blocks.erase(
         std::remove_if(page.blocks.begin(), page.blocks.end(), 
-            [](const WinBlock& b) { return b.lines.empty(); }), 
+            [](const WinBlock& b) { return b.type == BlockType::TEXT && b.lines.empty(); }), 
         page.blocks.end());
 
     return page;

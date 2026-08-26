@@ -1,4 +1,4 @@
-﻿#include <algorithm>
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstdint>
@@ -568,6 +568,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     WinExtract::WinFontW2Map font_w2_map = doc->get_page_font_w2_map(page_index);
     WinExtract::WinColorSpaceMap color_space_map = doc->get_page_color_space_map(page_index);
     std::shared_ptr<const WinExtract::WinFormXObjectMap> form_xobject_map = doc->get_page_form_xobject_map(page_index);
+    std::shared_ptr<const WinExtract::WinImageXObjectMap> image_xobject_map = doc->get_page_image_xobject_map(page_index);
     WinExtract::WinPageGeometry geo = doc->get_page_geometry(page_index);
 
     WinExtract::WinTextExtractor dev;
@@ -586,6 +587,7 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
         font_w2_map,
         color_space_map,
         form_xobject_map,
+        image_xobject_map,
         nullptr,
         0,
         &geo.mediabox,
@@ -664,6 +666,21 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
 
         const auto block_bbox = wz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
         block_dict["bbox"] = {block_bbox[0], block_bbox[1], block_bbox[2], block_bbox[3]};
+
+        if (block.type == WinExtract::BlockType::IMAGE) {
+            block_dict["width"] = block.image_width;
+            block_dict["height"] = block.image_height;
+            block_dict["ext"] = block.image_ext;
+            block_dict["image"] = block.image_base64;
+            if (!block.image_color_space.empty()) {
+                block_dict["color_space"] = block.image_color_space;
+            }
+            if (!block.image_decode.empty()) {
+                block_dict["decode_array"] = block.image_decode;
+            }
+            blocks_list.push_back(std::move(block_dict));
+            continue;
+        }
 
         json lines_list = json::array();
         for (const auto& line : block.lines) {
@@ -1481,6 +1498,35 @@ PYBIND11_MODULE(winnerz_core, m) {
                  return res;
              },
              py::arg("page_index") = 0)
+        .def("get_images",
+             [](PyWinDocument& self, int page_index) {
+                 py::list result;
+                 std::shared_ptr<const WinExtract::WinImageXObjectMap> img_map;
+                 {
+                     py::gil_scoped_release release;
+                     img_map = self.doc->get_page_image_xobject_map(page_index);
+                 }
+                 if (img_map) {
+                     for (const auto& kv : *img_map) {
+                         const auto& img = kv.second;
+                         py::dict img_dict;
+                         img_dict["id"] = kv.first;
+                         img_dict["width"] = img.width;
+                         img_dict["height"] = img.height;
+                         img_dict["bpc"] = img.bits_per_component;
+                         img_dict["colorspace"] = img.color_space;
+                         img_dict["filter"] = img.filter;
+                         if (img.stream_ptr) {
+                             img_dict["stream"] = py::bytes(reinterpret_cast<const char*>(img.stream_ptr->data()), img.stream_ptr->size());
+                         } else {
+                             img_dict["stream"] = py::bytes("");
+                         }
+                         result.append(img_dict);
+                     }
+                 }
+                 return result;
+             },
+             py::arg("page_index") = 0)
                                 .def("get_all_text",
              [](PyWinDocument& self) {
                  int page_count = self.doc->count_pages();
@@ -1532,6 +1578,25 @@ PYBIND11_MODULE(winnerz_core, m) {
              py::arg("page_index") = 0,
              py::arg("include_chars") = false,
              py::arg("sort") = false)
+        .def("get_images_json",
+             [](PyWinDocument& self, int page_index) {
+                 ExtractedPage extracted;
+                 {
+                     py::gil_scoped_release release;
+                     extracted = ExtractTextPage(self.doc, page_index, false);
+                 }
+                 json out = json::array();
+                 json j = ExtractedPageToJson(extracted, page_index, false, false);
+                 if (j.contains("blocks")) {
+                     for (const auto& block : j["blocks"]) {
+                         if (block.contains("type") && block["type"] == 1) { // 1 = IMAGE
+                             out.push_back(block);
+                         }
+                     }
+                 }
+                 return out.dump();
+             },
+             py::arg("page_index") = 0)
         .def("get_all_dicts_json",
              [](PyWinDocument& self, bool include_chars, bool sort) {
                  int page_count = self.doc->count_pages();

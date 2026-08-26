@@ -40,7 +40,7 @@ if(NOT nlohmann_json_FOUND)
     FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
-set(WINNERZ_FREETYPE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extract_text/free-type/freetype-2.14.3")
+set(WINNERZ_FREETYPE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/freetype-2.14.3")
 if(EXISTS "${WINNERZ_FREETYPE_DIR}/CMakeLists.txt")
     set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
     set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)

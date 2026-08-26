@@ -114,6 +114,7 @@ export interface WasmDocument {
 
   // ── Font & Draw & Render (PDFium) ───────────────────────────────────────────
   getPageFontBasenames(pageIndex: number): string;
+  getImages(pageIndex: number): Array<{id: string, width: number, height: number, bpc: number, colorspace: string, filter: string, stream: Uint8Array | null}>;
   getDrawings(pageIndex: number): WasmDrawingItem[];
   renderPage(pageIndex: number, scale: number, clip: number[] | Float32Array | null): WasmRenderedPage;
 
@@ -172,6 +173,7 @@ export declare class Page {
 
   get_text(mode?: 'text' | 'dict' | 'rawdict' | 'json' | 'rawjson' | 'blocks', sort?: boolean): string | WasmPageDict | WasmSimpleBlock[];
   get_page_font_basenames(): WasmFontBasenameMap;
+  get_images(): Array<{id: string, width: number, height: number, bpc: number, colorspace: string, filter: string, stream: Uint8Array | null}>;
   redact_text(rects: Array<[number, number, number, number]>): Uint8Array;
 
   /** Đã hỗ trợ trong WASM (PDFium) */

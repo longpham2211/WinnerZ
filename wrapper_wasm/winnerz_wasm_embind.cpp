@@ -1,4 +1,4 @@
-﻿// winnerz_wasm_embind.cpp
+// winnerz_wasm_embind.cpp
 #ifdef __EMSCRIPTEN__
 
 #include <algorithm>
@@ -217,11 +217,12 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     auto fw2 = doc->get_page_font_w2_map(page_index);
     auto fc = doc->get_page_color_space_map(page_index);
     auto fx = doc->get_page_form_xobject_map(page_index);
+    auto img_map = doc->get_page_image_xobject_map(page_index);
     auto geo = doc->get_page_geometry(page_index);
 
     WinExtract::WinTextExtractor dev;
     dev.begin_page(geo.mediabox.x1 - geo.mediabox.x0, geo.mediabox.y1 - geo.mediabox.y0);
-    WinExtract::WinPdfInterpreter::run(stream, dev, fu, fw, fcb, fcs, fm, fv, fw2, fc, fx,
+    WinExtract::WinPdfInterpreter::run(stream, dev, fu, fw, fcb, fcs, fm, fv, fw2, fc, fx, img_map,
                                        nullptr, 0, &geo.mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     ExtractedPage res;
     res.page = dev.finish_page();
@@ -262,6 +263,15 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
         block_dict["type"] = (block.type == WinExtract::BlockType::TEXT) ? 0 : 1;
         auto bb = wz_transform_rect({block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1}, ctm);
         block_dict["bbox"] = {bb[0], bb[1], bb[2], bb[3]};
+
+        if (block.type == WinExtract::BlockType::IMAGE) {
+            block_dict["width"] = block.image_width;
+            block_dict["height"] = block.image_height;
+            block_dict["ext"] = block.image_ext;
+            block_dict["image"] = block.image_base64;
+            blocks_list.push_back(std::move(block_dict));
+            continue;
+        }
 
         json lines_list = json::array();
         for (const auto& line : block.lines) {
@@ -352,9 +362,9 @@ static std::string ExtractTextPlain(const std::shared_ptr<WinExtract::WinPdfDocu
     return text_out;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// WasmDocument - Lá»›p Ä‘Æ°á»£c Expose sang JS qua Embind
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ──────────────────────────────────────────────────────────────────────────────────
+// WasmDocument - Lớp được Expose sang JS qua Embind
+// ──────────────────────────────────────────────────────────────────────────────────
 class WasmDocument {
 public:
     std::string path_;
@@ -386,91 +396,10 @@ public:
         return ExtractTextPlain(doc_, i, sort);
     }
 
-    void appendImagesToDict(int page_index, json& out) const {
-#if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
-        static bool pdfium_initialized = false;
-        if (!pdfium_initialized) {
-            FPDF_InitLibrary();
-            pdfium_initialized = true;
-        }
-
-        FPDF_DOCUMENT pdfdoc = FPDF_LoadMemDocument64(mem_data_.data(), mem_data_.size(), "");
-        if (pdfdoc) {
-            FPDF_PAGE page = FPDF_LoadPage(pdfdoc, page_index);
-            if (page) {
-                int num_objs = FPDFPage_CountObjects(page);
-                for (int obj_idx = 0; obj_idx < num_objs; ++obj_idx) {
-                    FPDF_PAGEOBJECT obj = FPDFPage_GetObject(page, obj_idx);
-                    if (FPDFPageObj_GetType(obj) == FPDF_PAGEOBJ_IMAGE) {
-                        float left = 0, bottom = 0, right = 0, top = 0;
-                        if (FPDFPageObj_GetBounds(obj, &left, &bottom, &right, &top)) {
-                            FPDF_BITMAP bitmap = FPDFImageObj_GetBitmap(obj);
-                            if (bitmap) {
-                                int width = FPDFBitmap_GetWidth(bitmap);
-                                int height = FPDFBitmap_GetHeight(bitmap);
-                                int stride = FPDFBitmap_GetStride(bitmap);
-                                int format = FPDFBitmap_GetFormat(bitmap);
-                                uint8_t* buffer = static_cast<uint8_t*>(FPDFBitmap_GetBuffer(bitmap));
-                                
-                                if (buffer && width > 0 && height > 0) {
-                                    std::vector<uint8_t> rgba(width * height * 4);
-                                    for (int y = 0; y < height; ++y) {
-                                        for (int x = 0; x < width; ++x) {
-                                            int src_idx = y * stride + x * (format == FPDFBitmap_Gray ? 1 : (format == FPDFBitmap_BGR ? 3 : 4));
-                                            int dst_idx = (y * width + x) * 4;
-                                            if (format == FPDFBitmap_BGRA || format == FPDFBitmap_BGR || format == FPDFBitmap_BGRA_Premul) {
-                                                rgba[dst_idx] = buffer[src_idx + 2];
-                                                rgba[dst_idx + 1] = buffer[src_idx + 1];
-                                                rgba[dst_idx + 2] = buffer[src_idx];
-                                                rgba[dst_idx + 3] = (format == FPDFBitmap_BGR) ? 255 : buffer[src_idx + 3];
-                                            } else if (format == FPDFBitmap_Gray) {
-                                                rgba[dst_idx] = buffer[src_idx];
-                                                rgba[dst_idx + 1] = buffer[src_idx];
-                                                rgba[dst_idx + 2] = buffer[src_idx];
-                                                rgba[dst_idx + 3] = 255;
-                                            }
-                                        }
-                                    }
-                                    
-                                    std::vector<uint8_t> png_data;
-                                    auto write_func = [](void *context, void *data, int size) {
-                                        auto* vec = static_cast<std::vector<uint8_t>*>(context);
-                                        const uint8_t* bytes = static_cast<const uint8_t*>(data);
-                                        vec->insert(vec->end(), bytes, bytes + size);
-                                    };
-                                    stbi_write_png_to_func(write_func, &png_data, width, height, 4, rgba.data(), width * 4);
-                                    
-                                    if (!png_data.empty()) {
-                                        std::string base64_img = Winnerz::base64_encode(png_data.data(), png_data.size());
-                                        json img_dict;
-                                        img_dict["type"] = 1;
-                                        wz_matrix ctm = ComputePageCTM(doc_->get_page_geometry(page_index));
-                                        auto mapped_bbox = wz_transform_rect({left, bottom, right, top}, ctm);
-                                        img_dict["bbox"] = {mapped_bbox[0], mapped_bbox[1], mapped_bbox[2], mapped_bbox[3]};
-                                        img_dict["width"] = width;
-                                        img_dict["height"] = height;
-                                        img_dict["ext"] = "png";
-                                        img_dict["image"] = base64_img;
-                                        out["blocks"].push_back(img_dict);
-                                    }
-                                }
-                                FPDFBitmap_Destroy(bitmap);
-                            }
-                        }
-                    }
-                }
-                FPDF_ClosePage(page);
-            }
-            FPDF_CloseDocument(pdfdoc);
-        }
-#endif
-    }
-
     std::string getDict(int i, bool sort = false) const {
         checkPage(i);
         const auto ep = ExtractTextPage(doc_, i, sort);
         json out = ExtractedPageToJson(ep, i, false, sort);
-        appendImagesToDict(i, out);
         return out.dump();
     }
 
@@ -478,7 +407,6 @@ public:
         checkPage(i);
         const auto ep = ExtractTextPage(doc_, i, sort);
         json out = ExtractedPageToJson(ep, i, true, sort);
-        appendImagesToDict(i, out);
         return out.dump();
     }
 
@@ -539,7 +467,6 @@ public:
     std::string getJson(int i, bool include_chars = false, bool sort = false) const {
         checkPage(i);
         json out = ExtractedPageToJson(ExtractTextPage(doc_, i, sort), i, include_chars, sort);
-        appendImagesToDict(i, out);
         return out.dump();
     }
 
@@ -549,7 +476,6 @@ public:
         std::string final_res = "[";
         for (int i = 0; i < n; ++i) {
             json out = ExtractedPageToJson(ExtractTextPage(doc_, i, sort), i, include_chars, sort);
-            appendImagesToDict(i, out);
             final_res += out.dump();
             if (i < n - 1) final_res += ",";
         }
@@ -562,6 +488,47 @@ public:
         const auto mm = doc_->get_page_font_vertical_metrics_map(i);
         json out = json::object();
         for (const auto& kv : mm) if (!kv.second.base_font.empty()) out[kv.first] = kv.second.base_font;
+        return out.dump();
+    }
+
+    emscripten::val getImages(int i) const {
+        checkPage(i);
+        auto img_map = doc_->get_page_image_xobject_map(i);
+        emscripten::val out = emscripten::val::array();
+        if (img_map) {
+            size_t idx = 0;
+            for (const auto& kv : *img_map) {
+                const auto& img = kv.second;
+                emscripten::val img_obj = emscripten::val::object();
+                img_obj.set("id", kv.first);
+                img_obj.set("width", img.width);
+                img_obj.set("height", img.height);
+                img_obj.set("bpc", img.bits_per_component);
+                img_obj.set("colorspace", img.color_space);
+                img_obj.set("filter", img.filter);
+                if (img.stream_ptr) {
+                    img_obj.set("stream", VecToVal(*img.stream_ptr));
+                } else {
+                    img_obj.set("stream", emscripten::val::null());
+                }
+                out.set(idx++, img_obj);
+            }
+        }
+        return out;
+    }
+
+    std::string getImagesJson(int i) const {
+        checkPage(i);
+        const auto ep = ExtractTextPage(doc_, i, false);
+        json out = json::array();
+        json j = ExtractedPageToJson(ep, i, false, false);
+        if (j.contains("blocks")) {
+            for (const auto& block : j["blocks"]) {
+                if (block.contains("type") && block["type"] == 1) { // 1 = IMAGE
+                    out.push_back(block);
+                }
+            }
+        }
         return out.dump();
     }
 
@@ -1055,6 +1022,8 @@ EMSCRIPTEN_BINDINGS(winnerz) {
         .function("getJson", &WasmDocument::getJson)
         .function("getAllDictsJson", &WasmDocument::getAllDictsJson)
         .function("getPageFontBasenames", &WasmDocument::getPageFontBasenames)
+        .function("getImages", &WasmDocument::getImages)
+        .function("getImagesJson", &WasmDocument::getImagesJson)
         .function("getDrawings", &WasmDocument::getDrawings)
         .function("renderPage", &WasmDocument::renderPage)
         .function("redactPagesBytes", &WasmDocument::redactPagesBytes)
