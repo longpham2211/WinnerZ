@@ -188,8 +188,28 @@ export class Document {
    */
   static async create(pdfData, wasmPath = '') {
     const W = await load_winnerz_module(wasmPath);
-    const bytes = pdfData instanceof Uint8Array ? pdfData : new Uint8Array(pdfData);
-    const rawDoc = new W.Document(bytes); // Changed to W.Document per new embind name
+    let bytes = pdfData instanceof Uint8Array ? pdfData : new Uint8Array(pdfData);
+    let rawDoc = new W.Document(bytes); // Changed to W.Document per new embind name
+    
+    // Auto-fallback: If file is encrypted (or has CMap issues handled by PDFium), 
+    // we rebuild it using PdfiumEditorDoc to flatten it, matching the Python wrapper logic.
+    if (rawDoc.isEncrypted()) {
+      try {
+        const srcDoc = new W.PdfiumEditorDoc(bytes);
+        const dstDoc = new W.PdfiumEditorDoc();
+        dstDoc.import_pages(srcDoc, "");
+        const rebuiltBytes = dstDoc.save(false);
+        
+        srcDoc.close(); srcDoc.delete();
+        dstDoc.close(); dstDoc.delete();
+        rawDoc.delete();
+        
+        bytes = rebuiltBytes;
+        rawDoc = new W.Document(bytes);
+      } catch (e) {
+        console.warn("Winnerz: Encrypted PDF auto-rebuild failed. Text extraction may be incomplete.", e);
+      }
+    }
 
     const doc = new Document();
     doc._raw = rawDoc;

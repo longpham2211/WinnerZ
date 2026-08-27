@@ -710,12 +710,9 @@ public:
 
     emscripten::val insertTextToPagesJson(const std::string& json_str, const std::string& fonts_dir) const {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
-        printf("Debug step: Entering insertTextToPagesJson\n");
         std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
         try {
-            printf("Debug step: Parsing JSON\n");
             json j = json::parse(json_str);
-            printf("Debug step: JSON parsed successfully\n");
             for (auto& item : j.items()) {
                 int page_index = std::stoi(item.key());
                 std::vector<Winnerz::WinInsertTextTask> tasks;
@@ -738,9 +735,7 @@ public:
             }
         } catch (const std::exception& e) { throw std::runtime_error(std::string("JSON parse error: ") + e.what()); }
 
-        printf("Debug step: Calling InsertTextToMultiplePages\n");
         std::vector<uint8_t> merged_bytes = Winnerz::InsertTextToMultiplePages(doc_.get(), pages_tasks, fonts_dir, nullptr, 0);
-        printf("Debug step: Returning result from InsertTextToMultiplePages\n");
         if (merged_bytes.empty()) return VecToVal(mem_data_); // Fallback to original
         return VecToVal(merged_bytes);
 #else
@@ -751,13 +746,10 @@ public:
 
     emscripten::val insertTextToPagesFitSpacingJson(const std::string& json_str, const std::string& fonts_dir) const {
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
-        printf("Debug step: Entering insertTextToPagesFitSpacingJson\n");
         // Same logic as above, just calling InsertTextToMultiplePagesFitSpacing
         std::map<int, std::vector<Winnerz::WinInsertTextTask>> pages_tasks;
         try {
-            printf("Debug step: Parsing JSON\n");
             json j = json::parse(json_str);
-            printf("Debug step: JSON parsed successfully\n");
             for (auto& item : j.items()) {
                 int page_index = std::stoi(item.key());
                 std::vector<Winnerz::WinInsertTextTask> tasks;
@@ -780,9 +772,7 @@ public:
             }
         } catch (const std::exception& e) { throw std::runtime_error(std::string("JSON parse error: ") + e.what()); }
 
-        printf("Debug step: Calling InsertTextToMultiplePagesFitSpacing\n");
         std::vector<uint8_t> merged_bytes = Winnerz::InsertTextToMultiplePagesFitSpacing(doc_.get(), pages_tasks, fonts_dir, nullptr, 0);
-        printf("Debug step: Returning result from InsertTextToMultiplePagesFitSpacing\n");
         if (merged_bytes.empty()) return VecToVal(mem_data_);
         return VecToVal(merged_bytes);
 #else
@@ -848,6 +838,11 @@ public:
         std::call_once(pdfium_init_once, []() {
             FPDF_InitLibrary();
         });
+    }
+
+    WasmPdfiumEditorDoc() {
+        InitPdfium();
+        doc = FPDF_CreateNewDocument();
     }
 
     WasmPdfiumEditorDoc(const emscripten::val& b) {
@@ -999,6 +994,7 @@ EMSCRIPTEN_BINDINGS(winnerz) {
     
 #if defined(WINNERZ_USE_PDFIUM_PREVIEW) && WINNERZ_USE_PDFIUM_PREVIEW
     class_<WasmPdfiumEditorDoc>("PdfiumEditorDoc")
+        .constructor<>()
         .constructor<emscripten::val>()
         .function("close", &WasmPdfiumEditorDoc::close)
         .function("import_pages", &WasmPdfiumEditorDoc::import_pages)

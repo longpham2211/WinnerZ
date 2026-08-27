@@ -253,15 +253,6 @@ static void write_png_data_to_vector(void *context, void *data, int size) {
 void WinTextExtractor::add_image(const Rect& bbox, const WinImageXObject& img) {
     if (!img.stream_ptr || img.stream_ptr->empty()) return;
     
-    printf("DEBUG add_image: obj_id %d, indexed_palette.size() = %zu\n", img.obj_id, img.indexed_palette.size());
-    if (img.indexed_palette.size() > 10) {
-        printf("DEBUG palette: %d %d %d %d %d %d %d %d %d %d\n",
-               img.indexed_palette[0], img.indexed_palette[1], img.indexed_palette[2],
-               img.indexed_palette[3], img.indexed_palette[4], img.indexed_palette[5],
-               img.indexed_palette[6], img.indexed_palette[7], img.indexed_palette[8],
-               img.indexed_palette[9]);
-    }
-    
     int w = img.width;
     int h = img.height;
     std::string base64_data = "";

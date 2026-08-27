@@ -3774,10 +3774,8 @@ std::shared_ptr<const WinImageXObjectMap> WinPdfDocument::get_page_image_xobject
                                                     if (pal_obj.is_stream && !pal_obj.stream.empty()) {
                                                         std::vector<uint8_t> dec = decode_stream_data(pal_obj.stream, pal_obj.dict, this);
                                                         if (!dec.empty()) {
-                                                            printf("DEBUG: Decoded palette stream size: %zu\n", dec.size());
                                                             img.indexed_palette = dec;
                                                         } else {
-                                                            printf("DEBUG: Using raw palette stream size: %zu\n", pal_obj.stream.size());
                                                             img.indexed_palette = pal_obj.stream;
                                                         }
                                                     }
