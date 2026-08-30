@@ -23,6 +23,14 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
         return;
     }
 
+    thread_local int global_run_count = 0;
+    if (recursion_depth == 0) {
+        global_run_count = 0;
+    }
+    if (++global_run_count > 2000) {
+        return;
+    }
+
     TextState st;
     std::vector<PdfToken> operands;
     bool in_text_object = false;

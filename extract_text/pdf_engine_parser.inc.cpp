@@ -3386,6 +3386,8 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
         }
     };
 
+    std::map<int, WinFormXObject> global_form_cache;
+
     std::function<WinFormXObjectMap(const std::string&,
                                     const WinFontUnicodeMap&,
                                     const WinFontWidthMap&,
@@ -3395,8 +3397,6 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                                     const WinFontVerticalMetricsMap&,
                                     const WinColorSpaceMap&,
                                     std::set<int>&)> build_forms;
-
-    int form_count = 0;
 
     build_forms = [&](const std::string& resources_dict,
                       const WinFontUnicodeMap& inherited_unicode,
@@ -3408,13 +3408,7 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                       const WinColorSpaceMap& inherited_color_space,
                       std::set<int>& recursion_guard) -> WinFormXObjectMap {
         WinFormXObjectMap forms;
-        if (++form_count > 1000) {
-            return forms;
-        }
-
-        if (resources_dict.empty()) {
-            return forms;
-        }
+        if (resources_dict.empty()) return forms;
 
         std::string xobject_dict;
         int xobject_ref = parse_ref_id_after_key(resources_dict, "/XObject");
@@ -3425,14 +3419,19 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
         if (xobject_dict.empty()) {
             extract_inline_dict_after_key(resources_dict, "/XObject", xobject_dict);
         }
-        if (xobject_dict.empty()) {
-            return forms;
-        }
+
+        if (xobject_dict.empty()) return forms;
 
         std::map<std::string, int> xobject_refs = parse_font_refs_from_dict(xobject_dict);
+
         for (const auto& it : xobject_refs) {
             const int xobj_id = it.second;
             if (xobj_id <= 0 || recursion_guard.find(xobj_id) != recursion_guard.end()) {
+                continue;
+            }
+            
+            if (global_form_cache.count(xobj_id)) {
+                forms[it.first] = global_form_cache[xobj_id];
                 continue;
             }
 
@@ -3522,6 +3521,7 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
                 recursion_guard.erase(xobj_id);
             }
 
+            global_form_cache[xobj_id] = form;
             forms[it.first] = std::move(form);
         }
 
@@ -3844,7 +3844,6 @@ std::shared_ptr<const WinImageXObjectMap> WinPdfDocument::get_page_image_xobject
                 }
                 recursion_guard.insert(xobj_id);
                 WinImageXObjectMap child_images = build_images(child_resources, recursion_guard);
-                recursion_guard.erase(xobj_id);
                 for (auto& child : child_images) {
                     images[it.first + "_" + child.first] = std::move(child.second);
                 }

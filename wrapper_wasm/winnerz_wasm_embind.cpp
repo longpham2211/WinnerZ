@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include <stdexcept>
 #include <iostream>
 #include <fstream>
@@ -157,6 +158,7 @@ struct SpanCompat {
     uint32_t color = 0;
     bool is_bold = false, is_italic = false, is_serif = false, is_mono = false, is_synthetic = false, split_leading_spaces = false;
     int wmode = 0;
+    int bidi = 0;
     WinExtract::Rect bbox{0, 0, 0, 0};
     std::vector<const WinExtract::WinChar*> chars;
 };
@@ -169,14 +171,14 @@ static std::vector<SpanCompat> BuildLineSpans(const WinExtract::WinLine& line) {
                         spans.back().color != ch.color || spans.back().is_bold != ch.is_bold ||
                         spans.back().is_italic != ch.is_italic || spans.back().is_serif != ch.is_serif ||
                         spans.back().is_mono != ch.is_mono || spans.back().is_synthetic != ch.is_synthetic ||
-                        spans.back().wmode != line.wmode;
+                        spans.back().bidi != ch.bidi || spans.back().wmode != line.wmode;
 
         if (new_span) {
             SpanCompat sp;
             sp.font_name = ch.font_name; sp.font_size = ch.size; sp.color = ch.color;
             sp.is_bold = ch.is_bold; sp.is_italic = ch.is_italic; sp.is_serif = ch.is_serif;
             sp.is_mono = ch.is_mono; sp.is_synthetic = ch.is_synthetic; sp.ascender = ch.ascender;
-            sp.descender = ch.descender; sp.wmode = line.wmode;
+            sp.descender = ch.descender; sp.wmode = line.wmode; sp.bidi = ch.bidi;
             spans.push_back(std::move(sp));
         }
         auto& sp = spans.back();
@@ -204,6 +206,67 @@ static std::string SpanText(const SpanCompat& s) {
     return t;
 }
 
+// Hàm Xóa Văn Bản Trùng Lặp (Loại bỏ Hidden/OCR text đè lên visible text)
+static void RemoveDuplicateText(WinExtract::WinPage& page) {
+    struct CharNode {
+        const WinExtract::WinChar* ch;
+        float x, y, size;
+    };
+    std::vector<CharNode> nodes;
+    
+    for (auto& block : page.blocks) {
+        if (block.type != WinExtract::BlockType::TEXT) continue;
+        for (auto& line : block.lines) {
+            for (auto& ch : line.chars) {
+                if (ch.c == ' ' || ch.is_synthetic) continue;
+                nodes.push_back({&ch, ch.origin.x, ch.origin.y, ch.size});
+            }
+        }
+    }
+
+    std::unordered_set<const WinExtract::WinChar*> duplicates;
+    
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (duplicates.count(nodes[i].ch)) continue;
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            if (duplicates.count(nodes[j].ch)) continue;
+            if (nodes[i].ch->c != nodes[j].ch->c) continue;
+            
+            float dx = nodes[i].x - nodes[j].x;
+            float dy = nodes[i].y - nodes[j].y;
+            
+            // Xóa chữ nếu trùng khớp tới 10% size
+            if (std::abs(dx) < nodes[i].size * 0.1f && std::abs(dy) < nodes[i].size * 0.1f) {
+                duplicates.insert(nodes[j].ch);
+            }
+        }
+    }
+    
+    if (duplicates.empty()) return;
+    
+    for (auto& block : page.blocks) {
+        if (block.type != WinExtract::BlockType::TEXT) continue;
+        for (auto& line : block.lines) {
+            line.chars.erase(std::remove_if(line.chars.begin(), line.chars.end(), [&](const WinExtract::WinChar& ch) {
+                return duplicates.count(&ch) > 0;
+            }), line.chars.end());
+        }
+        
+        // Xóa những dòng trống hoặc chỉ còn mỗi khoảng trắng thừa
+        block.lines.erase(std::remove_if(block.lines.begin(), block.lines.end(), [](const WinExtract::WinLine& l) {
+            for (const auto& ch : l.chars) {
+                if (ch.c != ' ' && !ch.is_synthetic) return false;
+            }
+            return true;
+        }), block.lines.end());
+    }
+    
+    // Xóa những block trống
+    page.blocks.erase(std::remove_if(page.blocks.begin(), page.blocks.end(), [](const WinExtract::WinBlock& b) {
+        return b.type == WinExtract::BlockType::TEXT && b.lines.empty();
+    }), page.blocks.end());
+}
+
 struct ExtractedPage { WinExtract::WinPage page; WinExtract::WinPageGeometry geo; };
 
 static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDocument>& doc, int page_index, bool /*sort*/=false) {
@@ -221,11 +284,15 @@ static ExtractedPage ExtractTextPage(const std::shared_ptr<WinExtract::WinPdfDoc
     auto geo = doc->get_page_geometry(page_index);
 
     WinExtract::WinTextExtractor dev;
+    dev.collect_styles = true; 
     dev.begin_page(geo.mediabox.x1 - geo.mediabox.x0, geo.mediabox.y1 - geo.mediabox.y0);
     WinExtract::WinPdfInterpreter::run(stream, dev, fu, fw, fcb, fcs, fm, fv, fw2, fc, fx, img_map,
                                        nullptr, 0, &geo.mediabox, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     ExtractedPage res;
     res.page = dev.finish_page();
+    
+    RemoveDuplicateText(res.page);
+    
     res.geo = geo;
     return res;
 }
@@ -250,7 +317,10 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
             auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
             auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-            if (ab[3] != bb[3]) return ab[3] < bb[3];
+            auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+            float y_a = quantize_y(ab[3]);
+            float y_b = quantize_y(bb[3]);
+            if (y_a != y_b) return y_a < y_b;
             if (ab[0] != bb[0]) return ab[0] < bb[0];
             return false;
         });
@@ -269,6 +339,12 @@ static json ExtractedPageToJson(const ExtractedPage& extracted, int page_index, 
             block_dict["height"] = block.image_height;
             block_dict["ext"] = block.image_ext;
             block_dict["image"] = block.image_base64;
+            if (!block.image_color_space.empty()) {
+                block_dict["color_space"] = block.image_color_space;
+            }
+            if (!block.image_decode.empty()) {
+                block_dict["decode_array"] = block.image_decode;
+            }
             blocks_list.push_back(std::move(block_dict));
             continue;
         }
@@ -341,7 +417,10 @@ static std::string ExtractTextPlain(const std::shared_ptr<WinExtract::WinPdfDocu
         std::stable_sort(sorted_blocks.begin(), sorted_blocks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
             auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
             auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-            if (ab[3] != bb[3]) return ab[3] < bb[3];
+            auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+            float y_a = quantize_y(ab[3]);
+            float y_b = quantize_y(bb[3]);
+            if (y_a != y_b) return y_a < y_b;
             if (ab[0] != bb[0]) return ab[0] < bb[0];
             return false;
         });
@@ -420,8 +499,11 @@ public:
             std::stable_sort(blks.begin(), blks.end(), [&ctm](const WinExtract::WinBlock* a, const WinExtract::WinBlock* b) {
                 auto ab = wz_transform_rect({a->bbox.x0, a->bbox.y0, a->bbox.x1, a->bbox.y1}, ctm);
                 auto bb = wz_transform_rect({b->bbox.x0, b->bbox.y0, b->bbox.x1, b->bbox.y1}, ctm);
-                if (std::abs(ab[3] - bb[3]) > 0.01f) return ab[3] > bb[3];
-                if (std::abs(ab[0] - bb[0]) > 0.01f) return ab[0] < bb[0];
+                auto quantize_y = [](float y) { return std::round(y / 2.0f) * 2.0f; };
+                float y_a = quantize_y(ab[3]);
+                float y_b = quantize_y(bb[3]);
+                if (y_a != y_b) return y_a > y_b;
+                if (ab[0] != bb[0]) return ab[0] < bb[0];
                 return ab[1] > bb[1];
             });
         }
