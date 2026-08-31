@@ -1696,13 +1696,15 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
         }
 
             if (final_fallback) {
-            for (int i = 0; i <= 255; ++i) {
-                auto it_fallback = final_fallback->find(i);
-                if (it_fallback != final_fallback->end()) {
-                    cmap[i] = {it_fallback->second};
+                for (int i = 0; i <= 255; ++i) {
+                    if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
+                        auto it_fallback = final_fallback->find(i);
+                        if (it_fallback != final_fallback->end()) {
+                            cmap[i] = {it_fallback->second};
+                        }
+                    }
                 }
             }
-        }
 
 
         if (!cmap.empty()) {
@@ -3003,13 +3005,15 @@ std::string base_font_name = parse_name_value_after_key(font_obj.dict, "/BaseFon
             }
 
             if (final_fallback) {
-            for (int i = 0; i <= 255; ++i) {
-                auto it_fallback = final_fallback->find(i);
-                if (it_fallback != final_fallback->end()) {
-                    cmap[i] = {it_fallback->second};
+                for (int i = 0; i <= 255; ++i) {
+                    if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
+                        auto it_fallback = final_fallback->find(i);
+                        if (it_fallback != final_fallback->end()) {
+                            cmap[i] = {it_fallback->second};
+                        }
+                    }
                 }
             }
-        }
 
             if (is_type3_subtype) {
                 apply_type3_ascii_fallback(cmap);
@@ -5806,9 +5810,11 @@ bool WinPdfDocument::patch_font_unicode_map_lazily(int font_obj_id) {
 
     if (fallback_mapping) {
         for (int i = 0; i <= 255; ++i) {
-            auto it_fallback = fallback_mapping->find(i);
-            if (it_fallback != fallback_mapping->end()) {
-                cmap[i] = {it_fallback->second};
+            if (cmap.find(i) == cmap.end() || cmap[i].empty() || cmap[i][0] < 32 || cmap[i][0] == 0xFFFD) {
+                auto it_fallback = fallback_mapping->find(i);
+                if (it_fallback != fallback_mapping->end()) {
+                    cmap[i] = {it_fallback->second};
+                }
             }
         }
     }

@@ -607,10 +607,8 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
                 } else new_line = true;
             }
         } else if (std::abs(base_offset) <= PARAGRAPH_DIST) {
-            // Indent check to spot text-indent style paragraphs
-            // this runs on every valid new-line, not just the first char after
-            // a new PDF text object.
-            if (wmode == 0 && cur_line) {
+            // restore old logic
+            if (wmode == 0 && cur_line && new_obj) {
                 if ((p.x - start.x) > 0.5f && !maybe_bullet) new_para = true; 
             }
             new_line = true;

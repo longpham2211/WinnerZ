@@ -721,7 +721,14 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                 adv = (adv / 1000.0f) * st.font_size + st.char_spacing;
                 if (cp == 32) adv += st.word_spacing;
                 adv *= (st.h_scale / 100.0f);
+                
+                //old
 
+                /*
+                st.tm[4] += adv * st.tm[0];
+                st.tm[5] += adv * st.tm[1];
+                */
+                // new
                 m[4] += adv * m[0];
                 m[5] += adv * m[1];
             }
