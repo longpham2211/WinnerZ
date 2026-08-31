@@ -698,14 +698,6 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                     if (cp == 32) adv_unscaled += st.word_spacing / st.font_size;
                 }
 
-                // apply scaling and character spacing
-                adv = (adv / 1000.0f) * st.font_size + st.char_spacing;
-                if (cp == 32) adv += st.word_spacing;
-                adv *= (st.h_scale / 100.0f);
-
-                st.tm[4] += adv * st.tm[0];
-                st.tm[5] += adv * st.tm[1];
-
                 // skip rendering if outside clip box
                 if (actualtext_clipped) {
                     continue;
@@ -724,6 +716,14 @@ void WinPdfInterpreter::run(const std::vector<uint8_t>& stream,
                     active_is_bold, active_is_italic, active_is_serif, active_is_mono, st.wmode,
                     active_ascender, active_descender, active_bidi,
                     true);
+
+                // apply scaling and character spacing for the NEXT character
+                adv = (adv / 1000.0f) * st.font_size + st.char_spacing;
+                if (cp == 32) adv += st.word_spacing;
+                adv *= (st.h_scale / 100.0f);
+
+                m[4] += adv * m[0];
+                m[5] += adv * m[1];
             }
         }
 

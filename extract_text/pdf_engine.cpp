@@ -67,3 +67,15 @@
 // --- Section 4: WinPdfDocument::* method implementations ---
 // Closes: } // namespace WinExtract
 #include "pdf_engine_parser.inc.cpp"
+
+
+
+/* 
+    TODO
+    # TODO List
+
+- `[ ]` Fix `build_images` logic in `e:\thuvien_winnerz\my-lib\extract_text\pdf_engine_parser.inc.cpp`:
+  - Restore `recursion_guard.erase(xobj_id)` to allow parsing of valid DAG image structures.
+  - Implement a `global_image_cache` (similar to `global_form_cache` for `build_forms`) to prevent exponential memory bloat during a Billion Laughs attack.
+
+*/

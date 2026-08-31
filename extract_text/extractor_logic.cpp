@@ -464,10 +464,9 @@ void WinTextExtractor::add_char_imp(int c, int glyph, float adv, float matrix[6]
     
     bidi = bidi & 1; 
     
-    float font_height = ascender - descender;
-    if (font_height <= 0.001f) font_height = 1.0f;
-    float m_size = font_height * matrix_expansion(m);
+    float m_size = matrix_expansion(m);
     if (m_size <= 0.001f) m_size = size;
+
     if (m_size <= 0.001f) m_size = 1.0f;
     
     if (wmode == 0) dir = {1.0f, 0.0f}; else dir = {0.0f, -1.0f};
