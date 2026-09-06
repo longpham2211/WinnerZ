@@ -220,7 +220,7 @@ static std::vector<std::string> tokenize_cmap_stream(const std::string &text) {
             }
             continue;
         }
-        if (c == '[' || c == ']') {
+        if (c == '[' || c == ']' || c == ')') {
             toks.push_back(text.substr(pos, 1));
             ++pos;
             continue;

@@ -4,30 +4,37 @@ project(WinnerZ_WASM C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ─── Nlohmann JSON (Header Only) ─────────────────────────────────────────────
-# Tải nlohmann_json bằng Git để tránh lỗi bung file .tar.xz
 include(FetchContent)
+
+# ─── Little-CMS (lcms2) ──────────────────────────────────────────────────────
 FetchContent_Declare(
     lcms2
-    URL "file://${CMAKE_CURRENT_SOURCE_DIR}/../Little-CMS-lcms2.19.1.tar.gz"
+    GIT_REPOSITORY https://github.com/mm2/Little-CMS.git
+    GIT_TAG        lcms2.16
+    GIT_SHALLOW    TRUE
 )
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
-FetchContent_MakeAvailable(lcms2)
+# Tự build lcms2 thủ công từ mã nguồn để đảm bảo tạo đúng target lcms2 cho Emscripten
+FetchContent_Populate(lcms2)
+file(GLOB LCMS2_SOURCES "${lcms2_SOURCE_DIR}/src/*.c")
+add_library(lcms2 STATIC ${LCMS2_SOURCES})
+target_include_directories(lcms2 PUBLIC "${lcms2_SOURCE_DIR}/include")
 
-
-include(FetchContent)
+# ─── Nlohmann JSON (Header Only) ─────────────────────────────────────────────
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
-    GIT_SHALLOW TRUE
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# ─── Libjpeg-turbo ───────────────────────────────────────────────────────────
 FetchContent_Declare(
     libjpeg-turbo
-    URL "file://${CMAKE_CURRENT_SOURCE_DIR}/../libjpeg-turbo-3.0.3.tar.gz"
-    PATCH_COMMAND sed -i "s/message(FATAL_ERROR \\\"The libjpeg-turbo build system cannot be integrated into another build system using add_subdirectory().  Use ExternalProject_Add() instead.\\\")/message(STATUS \\\"Skipped fatal error\\\")/g" CMakeLists.txt
+    GIT_REPOSITORY https://github.com/libjpeg-turbo/libjpeg-turbo.git
+    GIT_TAG        3.0.3
+    GIT_SHALLOW    TRUE
+    PATCH_COMMAND  sed -i "s/message(FATAL_ERROR \\\"The libjpeg-turbo build system cannot be integrated into another build system using add_subdirectory().  Use ExternalProject_Add() instead.\\\")/message(STATUS \\\"Skipped fatal error\\\")/g" CMakeLists.txt
 )
 set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
@@ -41,7 +48,9 @@ FetchContent_MakeAvailable(libjpeg-turbo)
 # ─── HarfBuzz (For Font Subsetting) ──────────────────────────────────────────
 FetchContent_Declare(
     harfbuzz
-    URL "file://${CMAKE_CURRENT_SOURCE_DIR}/../harfbuzz-8.3.0.tar.gz"
+    GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+    GIT_TAG        8.3.0
+    GIT_SHALLOW    TRUE
 )
 FetchContent_Populate(harfbuzz)
 file(GLOB HB_SUBSET_SOURCES
@@ -98,12 +107,13 @@ target_compile_definitions(WinnerZ_WASM_Lib PUBLIC
     WINNERZ_USE_PDFIUM_PREVIEW=${WINNERZ_USE_PDFIUM_PREVIEW}
 )
 
-# Sử dụng thư viện chuẩn của Emscripten cho WASM (không cần download)
+# Thêm -sUSE_HARFBUZZ=1 vào Emscripten cho phần Harfbuzz core
 target_compile_options(WinnerZ_WASM_Lib PRIVATE
     "-fexceptions"
     "-sUSE_FREETYPE=1"
     "-sUSE_ZLIB=1"
     "-sUSE_LIBPNG=1"
+    "-sUSE_HARFBUZZ=1"
     "-sDISABLE_EXCEPTION_CATCHING=0"
 )
 
@@ -145,6 +155,7 @@ target_link_options(winnerz_wasm PRIVATE
     "-sUSE_FREETYPE=1"
     "-sUSE_ZLIB=1"
     "-sUSE_LIBPNG=1"
+    "-sUSE_HARFBUZZ=1"
     "-sSINGLE_FILE=0"
     "-sEXPORT_ES6=1"
     "-sDISABLE_EXCEPTION_CATCHING=0"
